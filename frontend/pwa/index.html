@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="stylesheet" href="./src/styles.css" />
+    <script>
+      // Set API_BASE here for local dev if needed.
+      window.API_BASE = window.API_BASE || "http://localhost:4000/api";
+    </script>
+    <style>
+      /* Ensure auth submit button stays visible in dark mode */
+      #auth-submit.primary {
+        background: linear-gradient(135deg, #0ea5e9, #2563eb) !important;
+        color: #fff !important;
+        border-color: #2563eb !important;
+      }
+    </style>
+    <title>My Simple Nutrition Tracker</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./src/app.js"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js").catch((err) => console.error("SW registration failed", err));
+        });
+      }
+    </script>
+  </body>
+</html>

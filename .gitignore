@@ -1,0 +1,23 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Logs
+*.log
+*.log.*
+
+# Coverage and build artifacts
+coverage/
+dist/
+build/
+
+# Env and secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

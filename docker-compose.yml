@@ -1,0 +1,51 @@
+version: "3.9"
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: nutrition
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend/api
+      dockerfile: Dockerfile
+    environment:
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/nutrition"
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_MODEL: "llama3"
+      JWT_SECRET: "change-me"
+    ports:
+      - "4000:4000"
+    depends_on:
+      - ollama
+      - db
+    volumes:
+      - api_data:/data
+
+volumes:
+  ollama_models:
+  api_data:
+  pg_data:

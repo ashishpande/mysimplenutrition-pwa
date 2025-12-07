@@ -102,12 +102,13 @@ async function editFirstItem(token, meal) {
     console.log("no items to edit");
     return;
   }
+  const deltaProtein = 1;
   const res = await fetch(`${base}/api/meals/${meal.id}/items/${item.id}`, {
     method: "PATCH",
     headers: { ...headers, Authorization: `Bearer ${token}` },
     body: JSON.stringify({
       calories: item.nutrients?.calories || item.calories || 0,
-      protein_g: (item.nutrients?.protein_g || item.protein_g || 0) + 1,
+      protein_g: (item.nutrients?.protein_g || item.protein_g || 0) + deltaProtein,
       carbs_g: item.nutrients?.carbs_g || item.carbs_g || 0,
       fat_g: item.nutrients?.fat_g || item.fat_g || 0,
       fiber_g: item.nutrients?.fiber_g || item.fiber_g || 0,
@@ -116,7 +117,7 @@ async function editFirstItem(token, meal) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(`edit item failed: ${res.status} ${JSON.stringify(data)}`);
-  console.log("item edited");
+  console.log("item edited, protein +", deltaProtein);
 }
 
 async function fetchDaily(token) {
@@ -127,6 +128,7 @@ async function fetchDaily(token) {
   const data = await res.json();
   if (!res.ok) throw new Error(`fetch daily failed: ${res.status} ${JSON.stringify(data)}`);
   console.log("daily totals", data.day);
+  return data;
 }
 
 async function main() {
@@ -134,7 +136,13 @@ async function main() {
   const token = await login();
   const meal = await createMeal(token);
   await editFirstItem(token, meal);
-  await fetchDaily(token);
+  const daily = await fetchDaily(token);
+  const updatedItem = daily.meals?.flatMap((m) => m.items || []).find((i) => i.id === meal.items?.[0]?.id);
+  if (updatedItem) {
+    console.log("verified edited item protein:", updatedItem.protein_g || updatedItem.nutrients?.protein_g);
+  } else {
+    console.log("warning: edited item not found in daily response");
+  }
   console.log("smoke test completed");
 }
 

@@ -1,0 +1,13 @@
+{
+  "name": "pwa",
+  "version": "1.0.0",
+  "description": "PWA scaffold",
+  "main": "sw.js",
+  "scripts": {
+    "build": "echo \"Static site build; no bundler configured.\"",
+    "test": "echo \"No tests\" && exit 0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

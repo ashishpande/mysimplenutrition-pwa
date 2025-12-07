@@ -1,5 +1,5 @@
 name = "nutrition-pwa"
 compatibility_date = "2024-01-01"
 
-[site]
-bucket = "."
+# Cloudflare Pages config: publish the current directory (static build output).
+pages_build_output_dir = "."

@@ -1080,7 +1080,6 @@ function startEditItem(itemId, mealId) {
     state.today?.meals?.flatMap((m) => m.items || []).find((i) => i.id === itemId);
   const values = targetItem ? getItemNutrientValues(targetItem) : {};
   state.editingItem = { itemId, mealId, values };
-  scheduleAutoSave();
   render();
 }
 
@@ -1101,9 +1100,14 @@ function cancelEdit() {
 
 async function saveItemEdits(mealId, itemId) {
   if (!state.editingItem) return;
+  const currentItem =
+    state.today?.meals?.flatMap((m) => m.items || []).find((i) => i.id === itemId) ||
+    state.result?.meal?.items?.find((i) => i.id === itemId);
+  const baseline = currentItem ? getItemNutrientValues(currentItem) : getItemNutrientValues({ nutrients: {} });
+  const merged = { ...baseline, ...state.editingItem.values };
   const body = {};
-  for (const key of Object.keys(state.editingItem.values)) {
-    const n = Number(state.editingItem.values[key]);
+  for (const key of Object.keys(merged)) {
+    const n = Number(merged[key]);
     body[key] = Number.isFinite(n) ? n : 0;
   }
   try {

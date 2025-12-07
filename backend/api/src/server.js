@@ -734,25 +734,15 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
     });
   }
 
-  const total = items.reduce((acc, item) => accumulateNutrients(acc, item.nutrients), { ...emptyNutrients });
-
   const mealId = uuid();
   // Always use client-provided local date
   const dateStr = clientDateStr || new Date().toISOString().slice(0, 10);
-  const createdMeal = {
-    id: mealId,
-    userId,
-    mealType: resolvedMealType,
-    consumedAt,
-    text,
-    items,
-    total,
-  };
+  let createdMeal = null;
 
   // Persist meal, items, and daily totals in DB.
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.meal.create({
+      const mealRecord = await tx.meal.create({
         data: {
           id: mealId,
           userId,
@@ -785,7 +775,65 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
             })),
           },
         },
+        include: { items: true },
       });
+      const mealItems = mealRecord.items || [];
+      const mealTotals = mealItems.reduce(
+        (acc, itm) =>
+          accumulateNutrients(
+            acc,
+            normalizeNutrients({
+              calories: itm.calories,
+              protein_g: itm.protein_g,
+              carbs_g: itm.carbs_g,
+              fat_g: itm.fat_g,
+              fiber_g: itm.fiber_g,
+              sugars_g: itm.sugars_g,
+              saturated_fat_g: itm.saturated_fat_g,
+              trans_fat_g: itm.trans_fat_g,
+              cholesterol_mg: itm.cholesterol_mg,
+              sodium_mg: itm.sodium_mg,
+              vitamin_d_mcg: itm.vitamin_d_mcg,
+              calcium_mg: itm.calcium_mg,
+              iron_mg: itm.iron_mg,
+              potassium_mg: itm.potassium_mg,
+            })
+          ),
+        { ...emptyNutrients }
+      );
+      createdMeal = {
+        id: mealRecord.id,
+        userId,
+        mealType: resolvedMealType,
+        consumedAt,
+        text,
+        items: mealItems.map((itm) => ({
+          id: itm.id,
+          foodId: itm.foodId,
+          name: itm.name,
+          quantity: itm.quantity,
+          unit: itm.unit,
+          grams: itm.grams,
+          nutrients: normalizeNutrients({
+            calories: itm.calories,
+            protein_g: itm.protein_g,
+            carbs_g: itm.carbs_g,
+            fat_g: itm.fat_g,
+            fiber_g: itm.fiber_g,
+            sugars_g: itm.sugars_g,
+            saturated_fat_g: itm.saturated_fat_g,
+            trans_fat_g: itm.trans_fat_g,
+            cholesterol_mg: itm.cholesterol_mg,
+            sodium_mg: itm.sodium_mg,
+            vitamin_d_mcg: itm.vitamin_d_mcg,
+            calcium_mg: itm.calcium_mg,
+            iron_mg: itm.iron_mg,
+            potassium_mg: itm.potassium_mg,
+          }),
+          source: itm.source,
+        })),
+        total: mealTotals,
+      };
 
       await tx.dailyTotal.upsert({
         where: { userId_date: { userId, date: new Date(dateStr) } },
@@ -798,10 +846,10 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
         create: {
           userId,
           date: new Date(dateStr),
-          calories: total.calories,
-          protein_g: total.protein_g,
-          carbs_g: total.carbs_g,
-          fat_g: total.fat_g,
+          calories: mealTotals.calories,
+          protein_g: mealTotals.protein_g,
+          carbs_g: mealTotals.carbs_g,
+          fat_g: mealTotals.fat_g,
         },
       });
     });

@@ -3,6 +3,44 @@
  *   node scripts/smoke.js --base https://nutrition-api-spring-dust-1526.fly.dev --email you@example.com --password "pass"
  */
 import { randomUUID } from "crypto";
+import http from "http";
+import https from "https";
+import { URL } from "url";
+
+// Minimal fetch replacement using http/https.
+const fetchFn = async (urlStr, options = {}) => {
+  const url = new URL(urlStr);
+  const isHttps = url.protocol === "https:";
+  const lib = isHttps ? https : http;
+  const { method = "GET", headers = {}, body } = options;
+  const requestOpts = {
+    method,
+    headers,
+  };
+  return new Promise((resolve, reject) => {
+    const req = lib.request(url, requestOpts, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          json: async () => {
+            try {
+              return JSON.parse(data || "{}");
+            } catch {
+              return {};
+            }
+          },
+        });
+      });
+    });
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+};
+const fetch = fetchFn;
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((arg) => {

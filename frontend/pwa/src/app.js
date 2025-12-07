@@ -89,7 +89,7 @@ function renderTodaySection(result, today) {
               ${
                 state.editingItem?.itemId === item.id
                   ? renderEditForm(mealToShow.id, item)
-                  : `<button class="ghost small" data-edit="${item.id}">Edit</button>`
+                  : `<button class="ghost small" data-edit="${item.id}" data-meal="${mealToShow.id}">Edit</button>`
               }
               <div class="macro">
                 Calories: ${formatNumber(item.nutrients.calories, 0)} kcal |
@@ -675,7 +675,8 @@ function renderApp() {
       }
     };
     document.querySelectorAll("[data-edit]").forEach((btn) => {
-      btn.onclick = () => startEditItem(btn.dataset.edit, result?.meal?.id);
+      const mealId = btn.dataset.meal || result?.meal?.id;
+      btn.onclick = () => startEditItem(btn.dataset.edit, mealId);
     });
     document.querySelectorAll(".edit-block input[data-field]").forEach((input) => {
       input.oninput = (e) => updateEditingField(e.target.dataset.field, e.target.value);

@@ -14,6 +14,10 @@ build/
 # Env and secrets
 .env
 .env.*
+.secrets.sh
+
+# Local admin/test dashboards
+admin/
 
 # OS / editor
 .DS_Store

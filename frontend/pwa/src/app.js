@@ -4,12 +4,15 @@ const AUTH_BASE = API_BASE.replace(/\/api$/, "");
 
 const storedDeviceToken = localStorage.getItem("mfaDeviceToken") || "";
 const storedTheme = localStorage.getItem("appTheme") || "auto";
+const PIE_COLORS = ["#2563eb", "#0ea5e9", "#22c55e", "#f59e0b", "#a855f7", "#f97316"];
 
 const state = {
   listening: false,
   status: "idle",
   text: "",
   result: null,
+  editingItem: null, // { mealId, itemId, values }
+  today: null, // { day, meals }
   error: null,
   updateAvailable: false,
   theme: storedTheme, // auto | light | dark
@@ -53,6 +56,239 @@ const state = {
 };
 
 const appEl = document.getElementById("app");
+
+function isDesktopLike() {
+  return window.matchMedia ? window.matchMedia("(pointer: fine)").matches : true;
+}
+
+function renderTodaySection(result, today) {
+  const mealToShow = result?.meal;
+  const dayTotals = today?.day || result?.day;
+  const formatSource = (src) => {
+    if (!src) return "";
+    if (src.startsWith("llm_groq_")) return `source: Groq (${src.replace("llm_groq_", "")})`;
+    if (src.startsWith("llm_ollama_")) return `source: Ollama (${src.replace("llm_ollama_", "")})`;
+    if (src.includes("llm")) return `source: ${src}`;
+    if (src.includes("history") || src.includes("db")) return "source: database";
+    if (src.includes("catalog")) return "source: catalog";
+    if (src.includes("fallback")) return "source: fallback";
+    return `source: ${src}`;
+  };
+  const mealSection = mealToShow
+    ? `
+      <div class="meal meal-result">
+        <div class="tag">${mealToShow?.mealType || "unspecified"}</div>
+        <div><strong>Text:</strong> ${mealToShow?.text || "Logged meal"}</div>
+        <ul class="meal-items">
+          ${(mealToShow?.items || [])
+            .map(
+              (item) => `
+            <li>
+              <div class="item-title">${item.name}</div>
+              <div class="item-meta">${item.quantity} ${item.unit} (${Math.round(item.grams)}g) — ${formatSource(item.source)}</div>
+              ${
+                state.editingItem?.itemId === item.id
+                  ? renderEditForm(mealToShow.id, item)
+                  : `<button class="ghost small" data-edit="${item.id}">Edit</button>`
+              }
+              <div class="macro">
+                Calories: ${formatNumber(item.nutrients.calories, 0)} kcal |
+                Protein: ${formatNumber(item.nutrients.protein_g, 1)}g |
+                Carbs: ${formatNumber(item.nutrients.carbs_g, 1)}g |
+                Fiber: ${formatNumber(item.nutrients.fiber_g, 1)}g |
+                Sugar: ${formatNumber(item.nutrients.sugars_g, 1)}g |
+                Fat: ${formatNumber(item.nutrients.fat_g, 1)}g |
+                Sat: ${formatNumber(item.nutrients.saturated_fat_g, 1)}g |
+                Trans: ${formatNumber(item.nutrients.trans_fat_g, 1)}g |
+                Chol: ${formatNumber(item.nutrients.cholesterol_mg, 0)}mg |
+                Sodium: ${formatNumber(item.nutrients.sodium_mg, 0)}mg
+              </div>
+            </li>
+          `
+            )
+            .join("")}
+        </ul>
+      <div class="total">
+        Total: ${formatNumber(mealToShow?.total?.calories, 0)} kcal — P: ${formatNumber(mealToShow?.total?.protein_g, 1)}g | C: ${formatNumber(mealToShow?.total?.carbs_g, 1)}g | F: ${formatNumber(mealToShow?.total?.fat_g, 1)}g
+      </div>
+    </div>
+    `
+    : "";
+
+  const daySection = dayTotals
+    ? `
+    <div class="day day-summary">
+      <h3>Day so far (${formatLocalYMD(new Date())})</h3>
+      <div class="macro">
+        ${formatNumber(dayTotals?.calories, 0)} kcal — P: ${formatNumber(dayTotals?.protein_g, 1)}g | C: ${formatNumber(dayTotals?.carbs_g, 1)}g | F: ${formatNumber(dayTotals?.fat_g, 1)}g
+      </div>
+      ${renderNutrientGrid(dayTotals)}
+      ${renderPie(dayTotals, "Day breakdown")}
+    </div>
+    `
+    : "";
+
+  const todayMealsSection =
+    today?.meals?.length
+      ? `<div class="day-meals">
+          <h3>Today’s meals</h3>
+          <ul class="meal-list">
+            ${today.meals
+              .map((m) => {
+                const totals = computeTotalsFromItems(m.items || []);
+                return `
+                  <li>
+                    <div class="meal-header">
+                      <span class="pill">${m.mealType || "meal"}</span>
+                      <span class="meal-time">${new Date(m.consumedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                    </div>
+                    <div class="meal-text">${m.text || "Logged meal"}</div>
+                    <div class="macro small">
+                      ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
+                    </div>
+                  </li>
+                `;
+              })
+              .join("")}
+          </ul>
+        </div>`
+      : "";
+
+  if (!mealSection && !daySection && !todayMealsSection) return "<p>No meal yet.</p>";
+  return `${mealSection}${daySection}${todayMealsSection}`;
+}
+
+function renderEditForm(mealId, item) {
+  const vals = state.editingItem?.values || {};
+  const field = (key, label, unit = "") => {
+    const current = vals[key] ?? item.nutrients?.[key] ?? item[key] ?? "";
+    return `
+      <label class="inline-label">
+        <span>${label}</span>
+        <input type="number" step="0.1" data-field="${key}" value="${current}" />
+        <span class="unit">${unit}</span>
+      </label>
+    `;
+  };
+  return `
+    <div class="edit-block" data-item="${item.id}">
+      <div class="edit-grid">
+        ${field("calories", "Calories", "kcal")}
+        ${field("protein_g", "Protein", "g")}
+        ${field("carbs_g", "Carbs", "g")}
+        ${field("fat_g", "Fat", "g")}
+        ${field("fiber_g", "Fiber", "g")}
+        ${field("sugars_g", "Sugars", "g")}
+        ${field("saturated_fat_g", "Sat Fat", "g")}
+        ${field("trans_fat_g", "Trans Fat", "g")}
+        ${field("cholesterol_mg", "Cholesterol", "mg")}
+        ${field("sodium_mg", "Sodium", "mg")}
+        ${field("vitamin_d_mcg", "Vitamin D", "mcg")}
+        ${field("calcium_mg", "Calcium", "mg")}
+        ${field("iron_mg", "Iron", "mg")}
+        ${field("potassium_mg", "Potassium", "mg")}
+      </div>
+      <div class="edit-actions">
+        <span class="autosave-note">Auto-saving changes...</span>
+        <button class="ghost small" data-cancel="${item.id}">Close</button>
+      </div>
+    </div>
+  `;
+}
+
+function formatNumber(value, digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0";
+  return n.toFixed(digits);
+}
+
+function normalizeTotals(total = {}) {
+  return {
+    calories: total.calories || 0,
+    protein_g: total.protein_g || 0,
+    carbs_g: total.carbs_g || 0,
+    fat_g: total.fat_g || 0,
+    fiber_g: total.fiber_g || 0,
+    sugars_g: total.sugars_g || 0,
+    saturated_fat_g: total.saturated_fat_g || 0,
+    trans_fat_g: total.trans_fat_g || 0,
+    cholesterol_mg: total.cholesterol_mg || 0,
+    sodium_mg: total.sodium_mg || 0,
+    vitamin_d_mcg: total.vitamin_d_mcg || 0,
+    calcium_mg: total.calcium_mg || 0,
+    iron_mg: total.iron_mg || 0,
+    potassium_mg: total.potassium_mg || 0,
+  };
+}
+
+function computePieSlices(total) {
+  const t = normalizeTotals(total);
+  const segments = [
+    { label: "Total Carbs (g)", value: t.carbs_g },
+    { label: "Fiber (g)", value: t.fiber_g },
+    { label: "Total Sugar (g)", value: t.sugars_g },
+    { label: "Protein (g)", value: t.protein_g },
+    { label: "Total Fat (g)", value: t.fat_g },
+    { label: "Cholesterol (mg)", value: t.cholesterol_mg },
+  ].filter((s) => Number(s.value) > 0);
+  const totalValue = segments.reduce((sum, seg) => sum + Number(seg.value || 0), 0) || 1;
+  let cursor = 0;
+  const slices = segments.map((seg, idx) => {
+    const start = (cursor / totalValue) * 360;
+    cursor += Number(seg.value || 0);
+    const end = (cursor / totalValue) * 360;
+    return { ...seg, start, end, color: PIE_COLORS[idx % PIE_COLORS.length] };
+  });
+  const gradient = slices.map((s) => `${s.color} ${s.start.toFixed(2)}deg ${s.end.toFixed(2)}deg`).join(", ");
+  return { slices, gradient };
+}
+
+function renderPie(total, title) {
+  const { slices, gradient } = computePieSlices(total);
+  if (!slices.length) return "";
+  return `
+    <div class="pie-block">
+      <div class="pie" style="background: conic-gradient(${gradient});"></div>
+      <div class="pie-legend">
+        ${slices
+          .map(
+            (s) => `
+              <div class="legend-row">
+                <span class="dot" style="background:${s.color};"></span>
+                <span class="label">${s.label}</span>
+                <span class="value">${formatNumber(s.value, 1)}</span>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderNutrientGrid(total) {
+  const t = normalizeTotals(total);
+  const unsaturated = Math.max(t.fat_g - t.saturated_fat_g - t.trans_fat_g, 0);
+  return `
+    <div class="nutrient-grid">
+      <div class="nutrient-pill highlight">Calories <strong>${formatNumber(t.calories, 0)}</strong></div>
+      <div class="nutrient-pill">Protein <strong>${formatNumber(t.protein_g, 1)}g</strong></div>
+      <div class="nutrient-pill">Total Carbs <strong>${formatNumber(t.carbs_g, 1)}g</strong></div>
+      <div class="nutrient-pill">Fiber <strong>${formatNumber(t.fiber_g, 1)}g</strong></div>
+      <div class="nutrient-pill">Total Sugar <strong>${formatNumber(t.sugars_g, 1)}g</strong></div>
+      <div class="nutrient-pill">Total Fat <strong>${formatNumber(t.fat_g, 1)}g</strong></div>
+      <div class="nutrient-pill">Saturated Fat <strong>${formatNumber(t.saturated_fat_g, 1)}g</strong></div>
+      <div class="nutrient-pill">Trans Fat <strong>${formatNumber(t.trans_fat_g, 1)}g</strong></div>
+      <div class="nutrient-pill">Unsaturated Fat <strong>${formatNumber(unsaturated, 1)}g</strong></div>
+      <div class="nutrient-pill">Cholesterol <strong>${formatNumber(t.cholesterol_mg, 0)}mg</strong></div>
+      <div class="nutrient-pill">Sodium <strong>${formatNumber(t.sodium_mg, 0)}mg</strong></div>
+      <div class="nutrient-pill">Vitamin D <strong>${formatNumber(t.vitamin_d_mcg, 1)}mcg</strong></div>
+      <div class="nutrient-pill">Calcium <strong>${formatNumber(t.calcium_mg, 0)}mg</strong></div>
+      <div class="nutrient-pill">Iron <strong>${formatNumber(t.iron_mg, 1)}mg</strong></div>
+      <div class="nutrient-pill">Potassium <strong>${formatNumber(t.potassium_mg, 0)}mg</strong></div>
+    </div>
+  `;
+}
 
 function determineMealType(text) {
   const lower = (text || "").toLowerCase();
@@ -111,6 +347,9 @@ function render() {
   if (!state.auth.accessToken) {
     renderAuth();
   } else {
+    if (state.tab === "today" && !state.today) {
+      fetchToday();
+    }
     renderApp();
   }
 }
@@ -322,35 +561,7 @@ function renderApp() {
           </section>
           <section class="card">
             <h2>Meal result</h2>
-            ${
-              result
-                ? `
-              <div class="meal">
-                <div class="tag">${result.meal.mealType || "unspecified"}</div>
-                <div><strong>Text:</strong> ${result.meal.text}</div>
-                <ul>
-                  ${result.meal.items
-                    .map(
-                      (item) => `
-                    <li>
-                      ${item.name} — ${item.quantity} ${item.unit} (${item.grams}g) [${item.source}]
-                      <div class="macro">Calories: ${item.nutrients.calories} kcal | P: ${item.nutrients.protein_g}g | C: ${item.nutrients.carbs_g}g | F: ${item.nutrients.fat_g}g</div>
-                    </li>
-                  `
-                    )
-                    .join("")}
-                </ul>
-                <div class="total">
-                  Total: ${result.meal.total.calories} kcal — P: ${result.meal.total.protein_g}g | C: ${result.meal.total.carbs_g}g | F: ${result.meal.total.fat_g}g
-                </div>
-              </div>
-              <div class="day">
-                <h3>Day so far (${result.day.date})</h3>
-                <div>${result.day.calories} kcal — P: ${result.day.protein_g}g | C: ${result.day.carbs_g}g | F: ${result.day.fat_g}g</div>
-              </div>
-            `
-                : "<p>No meal yet.</p>"
-            }
+            ${renderTodaySection(result, state.today)}
           </section>`
             : ""
         }
@@ -449,9 +660,29 @@ function renderApp() {
   if (tab === "today") {
     document.getElementById("voice-btn").onclick = toggleVoice;
     document.getElementById("submit-btn").onclick = submitText;
-    document.getElementById("text-input").oninput = (e) => {
+    if (!state.today) {
+      fetchToday();
+    }
+    const textInput = document.getElementById("text-input");
+    textInput.oninput = (e) => {
       state.text = e.target.value;
     };
+    textInput.onkeydown = (e) => {
+      if (!isDesktopLike()) return;
+      if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        submitText();
+      }
+    };
+    document.querySelectorAll("[data-edit]").forEach((btn) => {
+      btn.onclick = () => startEditItem(btn.dataset.edit, result?.meal?.id);
+    });
+    document.querySelectorAll(".edit-block input[data-field]").forEach((input) => {
+      input.oninput = (e) => updateEditingField(e.target.dataset.field, e.target.value);
+    });
+    document.querySelectorAll("[data-cancel]").forEach((btn) => {
+      btn.onclick = () => cancelEdit();
+    });
   }
   document.querySelectorAll(".tabs button, .mobile-nav button").forEach((btn) => {
     btn.onclick = () => {
@@ -592,6 +823,7 @@ async function submitAuth() {
     }
     state.status = "idle";
     fetchDays();
+    fetchToday();
     render();
   } catch (err) {
     state.error = err.message;
@@ -653,6 +885,10 @@ async function submitText() {
     return;
   }
   const mealType = determineMealType(state.text);
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  const now = new Date();
+  const clientDateStr = formatLocalYMD(now);
+  const consumedAt = new Date(now.getTime() - tzOffsetMinutes * 60000).toISOString();
   state.status = "loading";
   state.error = null;
   render();
@@ -663,13 +899,15 @@ async function submitText() {
         "Content-Type": "application/json",
         Authorization: `Bearer ${state.auth.accessToken}`,
       },
-      body: JSON.stringify({ text: state.text, mealType }),
+      body: JSON.stringify({ text: state.text, mealType, tzOffsetMinutes, clientDateStr, consumedAt }),
     });
     const data = await parseJsonSafe(res);
     if (!res.ok) {
       throw new Error(data?.error || "Request failed");
     }
     state.result = data;
+    state.text = "";
+    fetchToday();
     fetchDays();
   } catch (err) {
     state.error = err.message || "Unknown error";
@@ -684,17 +922,42 @@ async function fetchDays() {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - 6);
-  const startStr = start.toISOString().slice(0, 10);
-  const endStr = end.toISOString().slice(0, 10);
+  const startStr = formatLocalYMD(start);
+  const endStr = formatLocalYMD(end);
   try {
-    const res = await fetch(`${API_BASE}/days?start=${startStr}&end=${endStr}`, {
+    const tzOffsetMinutes = new Date().getTimezoneOffset();
+    const res = await fetch(`${API_BASE}/days?start=${startStr}&end=${endStr}&tzOffsetMinutes=${tzOffsetMinutes}`, {
       headers: { Authorization: `Bearer ${state.auth.accessToken}` },
     });
     const data = await parseJsonSafe(res);
     if (!res.ok) throw new Error(data?.error || "Failed to load days");
-    state.days = data.days || [];
+    state.days = (data.days || []).map((d) => ({
+      ...d,
+      date: formatLocalYMD(new Date(d.date)),
+    }));
   } catch (err) {
     state.error = err.message;
+  }
+}
+
+async function fetchToday() {
+  if (!state.auth.accessToken) return;
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  const date = formatLocalYMD(new Date());
+  try {
+    const res = await fetch(`${API_BASE}/daily?date=${date}&tzOffsetMinutes=${tzOffsetMinutes}&_=${Date.now()}`, {
+      headers: { Authorization: `Bearer ${state.auth.accessToken}` },
+      cache: "no-store",
+    });
+    const data = await parseJsonSafe(res);
+    if (res.status === 304) return;
+    if (!res.ok || !data) throw new Error(data?.error || "Failed to load today");
+    state.today = data;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("fetch_today_failed", err);
+  } finally {
+    render();
   }
 }
 
@@ -789,6 +1052,115 @@ function toggleTheme() {
   render();
 }
 
+let editSaveTimeout;
+
+function getItemNutrientValues(item) {
+  return {
+    calories: item.nutrients?.calories ?? item.calories ?? 0,
+    protein_g: item.nutrients?.protein_g ?? item.protein_g ?? 0,
+    carbs_g: item.nutrients?.carbs_g ?? item.carbs_g ?? 0,
+    fat_g: item.nutrients?.fat_g ?? item.fat_g ?? 0,
+    fiber_g: item.nutrients?.fiber_g ?? item.fiber_g ?? 0,
+    sugars_g: item.nutrients?.sugars_g ?? item.sugars_g ?? 0,
+    saturated_fat_g: item.nutrients?.saturated_fat_g ?? item.saturated_fat_g ?? 0,
+    trans_fat_g: item.nutrients?.trans_fat_g ?? item.trans_fat_g ?? 0,
+    cholesterol_mg: item.nutrients?.cholesterol_mg ?? item.cholesterol_mg ?? 0,
+    sodium_mg: item.nutrients?.sodium_mg ?? item.sodium_mg ?? 0,
+    vitamin_d_mcg: item.nutrients?.vitamin_d_mcg ?? item.vitamin_d_mcg ?? 0,
+    calcium_mg: item.nutrients?.calcium_mg ?? item.calcium_mg ?? 0,
+    iron_mg: item.nutrients?.iron_mg ?? item.iron_mg ?? 0,
+    potassium_mg: item.nutrients?.potassium_mg ?? item.potassium_mg ?? 0,
+  };
+}
+
+function startEditItem(itemId, mealId) {
+  const targetItem =
+    state.result?.meal?.items?.find((i) => i.id === itemId) ||
+    state.today?.meals?.flatMap((m) => m.items || []).find((i) => i.id === itemId);
+  const values = targetItem ? getItemNutrientValues(targetItem) : {};
+  state.editingItem = { itemId, mealId, values };
+  scheduleAutoSave();
+  render();
+}
+
+function updateEditingField(field, value) {
+  if (!state.editingItem) return;
+  state.editingItem.values[field] = value;
+  scheduleAutoSave();
+}
+
+function cancelEdit() {
+  state.editingItem = null;
+  if (editSaveTimeout) {
+    clearTimeout(editSaveTimeout);
+    editSaveTimeout = null;
+  }
+  render();
+}
+
+async function saveItemEdits(mealId, itemId) {
+  if (!state.editingItem) return;
+  const body = {};
+  for (const key of Object.keys(state.editingItem.values)) {
+    const n = Number(state.editingItem.values[key]);
+    body[key] = Number.isFinite(n) ? n : 0;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/meals/${mealId}/items/${itemId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.auth.accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data?.error || "Failed to update item");
+    await fetchToday();
+    if (state.today?.meals?.length && state.result?.meal?.id === mealId) {
+      const updated = state.today.meals.find((m) => m.id === mealId);
+      if (updated) {
+        state.result.meal = {
+          ...updated,
+          total: computeTotalsFromItems(updated.items || []),
+          items: updated.items.map((i) => ({
+            ...i,
+            nutrients: {
+              calories: i.calories,
+              protein_g: i.protein_g,
+              carbs_g: i.carbs_g,
+              fat_g: i.fat_g,
+              fiber_g: i.fiber_g,
+              sugars_g: i.sugars_g,
+              saturated_fat_g: i.saturated_fat_g,
+              trans_fat_g: i.trans_fat_g,
+              cholesterol_mg: i.cholesterol_mg,
+              sodium_mg: i.sodium_mg,
+              vitamin_d_mcg: i.vitamin_d_mcg,
+              calcium_mg: i.calcium_mg,
+              iron_mg: i.iron_mg,
+              potassium_mg: i.potassium_mg,
+            },
+          })),
+        };
+        state.result.day = state.today.day;
+      }
+    }
+  } catch (err) {
+    state.error = err.message;
+  } finally {
+    render();
+  }
+}
+
+function scheduleAutoSave() {
+  if (!state.editingItem) return;
+  if (editSaveTimeout) clearTimeout(editSaveTimeout);
+  editSaveTimeout = setTimeout(() => {
+    saveItemEdits(state.editingItem.mealId, state.editingItem.itemId);
+  }, 800);
+}
+
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     state.updateAvailable = true;
@@ -812,6 +1184,47 @@ async function parseJsonSafe(res) {
   } catch (_err) {
     return null;
   }
+}
+
+function formatLocalYMD(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function computeTotalsFromItems(items) {
+  return items.reduce(
+    (acc, item) => ({
+      calories: acc.calories + (item.calories || item.nutrients?.calories || 0),
+      protein_g: acc.protein_g + (item.protein_g || item.nutrients?.protein_g || 0),
+      carbs_g: acc.carbs_g + (item.carbs_g || item.nutrients?.carbs_g || 0),
+      fat_g: acc.fat_g + (item.fat_g || item.nutrients?.fat_g || 0),
+      fiber_g: acc.fiber_g + (item.fiber_g || item.nutrients?.fiber_g || 0),
+      sugars_g: acc.sugars_g + (item.sugars_g || item.nutrients?.sugars_g || 0),
+      saturated_fat_g: acc.saturated_fat_g + (item.saturated_fat_g || item.nutrients?.saturated_fat_g || 0),
+      trans_fat_g: acc.trans_fat_g + (item.trans_fat_g || item.nutrients?.trans_fat_g || 0),
+      cholesterol_mg: acc.cholesterol_mg + (item.cholesterol_mg || item.nutrients?.cholesterol_mg || 0),
+      sodium_mg: acc.sodium_mg + (item.sodium_mg || item.nutrients?.sodium_mg || 0),
+      vitamin_d_mcg: acc.vitamin_d_mcg + (item.vitamin_d_mcg || item.nutrients?.vitamin_d_mcg || 0),
+      calcium_mg: acc.calcium_mg + (item.calcium_mg || item.nutrients?.calcium_mg || 0),
+      iron_mg: acc.iron_mg + (item.iron_mg || item.nutrients?.iron_mg || 0),
+      potassium_mg: acc.potassium_mg + (item.potassium_mg || item.nutrients?.potassium_mg || 0),
+    }),
+    {
+      calories: 0,
+      protein_g: 0,
+      carbs_g: 0,
+      fat_g: 0,
+      fiber_g: 0,
+      sugars_g: 0,
+      saturated_fat_g: 0,
+      trans_fat_g: 0,
+      cholesterol_mg: 0,
+      sodium_mg: 0,
+      vitamin_d_mcg: 0,
+      calcium_mg: 0,
+      iron_mg: 0,
+      potassium_mg: 0,
+    }
+  );
 }
 
 applyTheme();

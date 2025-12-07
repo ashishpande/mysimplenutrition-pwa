@@ -84,8 +84,8 @@ textarea {
   font-size: 15px;
   font-family: inherit;
   resize: vertical;
-  background: #f8fbff;
-  color: #0b1224;
+  background: #ffffff;
+  color: #0f172a;
 }
 
 button {
@@ -190,7 +190,7 @@ body.theme-dark .primary,
   .tab.active { background: linear-gradient(135deg, #2563eb, #0ea5e9); border-color: #2563eb; }
   .meal { background: #f7f9fd; border-color: #dfe4ee; color: #0b1224; }
   .meal .tag { background: #e2e8f0; color: #1f2937; }
-  .macro { color: #475569; }
+  .macro { color: #0f172a; }
   .days li { background: linear-gradient(135deg, #0f172a, #111827); border-color: #1f2937; box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35); color: #e5e7eb; }
   .update-banner { background: #0f172a; border-color: #1f2937; color: #e5e7eb; }
   .mobile-nav { background: rgba(15, 23, 42, 0.9); border-top-color: #1f2937; color: #e5e7eb; }
@@ -223,7 +223,7 @@ body.theme-dark .primary,
 }
 
 .macro {
-  color: #475569;
+  color: #0f172a;
   font-size: 13px;
 }
 
@@ -264,16 +264,7 @@ body.theme-dark .primary,
   color: #0b1224 !important;
 }
 
-/* Force meal text black in dark mode */
-:root.theme-dark .meal,
-:root.theme-dark .meal li,
-:root.theme-dark .meal .macro,
-:root.theme-dark .meal .total {
-  color: #dc2626 !important;
-}
-:root.theme-dark .meal * {
-  color: #dc2626 !important;
-}
+
 
 .tab-row {
   display: grid;
@@ -438,6 +429,7 @@ body.theme-dark .primary,
   border-radius: 12px;
   padding: 12px;
   background: #f8fbff;
+  color: #0f172a;
 }
 
 .meal .tag {
@@ -452,10 +444,66 @@ body.theme-dark .primary,
   font-size: 12px;
 }
 
-/* Force meal text to black for visibility */
+.meal-result,
+.day-summary {
+  color: #0f172a;
+}
+
+.day-summary .macro {
+  color: #0f172a;
+}
+:root.theme-dark .day-summary h3,
+:root.theme-dark .day-summary .macro,
+:root.theme-dark .day-summary {
+  color: #0f172a !important;
+}
+
+.meal-items {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  display: grid;
+  gap: 12px;
+}
+
+.meal-items .item-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.meal-items .item-meta {
+  font-size: 13px;
+  color: #334155;
+  margin-bottom: 4px;
+}
+
+.ghost.small {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* Meal text styling */
 .meal,
-.meal * {
-  color: #0b1224 !important;
+.meal li,
+.meal .macro,
+.meal .total {
+  color: #0b1224;
+}
+
+:root.theme-dark .meal,
+:root.theme-dark .meal li,
+:root.theme-dark .meal .macro,
+:root.theme-dark .meal .total {
+  color: #0b1224;
+}
+
+:root.theme-dark .meal-result,
+:root.theme-dark .day-summary {
+  color: #0f172a;
+}
+
+:root.theme-dark .day-summary .macro {
+  color: #0f172a;
 }
 
 /* Force history/days text black in dark mode */
@@ -561,6 +609,233 @@ body.theme-dark,
   color: #e5e7eb;
 }
 
+.nutrient-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.nutrient-pill {
+  background: #eef2ff;
+  border: 1px solid #d9e0ff;
+  color: #0f172a;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.nutrient-pill.highlight {
+  background: #dbeafe;
+  border-color: #bfdbfe;
+}
+
+.pie-block {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.pie {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  position: relative;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.pie::after {
+  content: "";
+  position: absolute;
+  inset: 18%;
+  border-radius: 50%;
+  background: #f8fafc;
+}
+
+.pie-legend {
+  display: grid;
+  gap: 6px;
+}
+
+.legend-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.legend-row .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.legend-row .value {
+  font-weight: 700;
+}
+
+.edit-block {
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.inline-label {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.inline-label input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+}
+
+.inline-label .unit {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.primary.small,
+.ghost.small {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.autosave-note {
+  font-size: 12px;
+  color: #475569;
+}
+
+:root.theme-dark .nutrient-pill,
+:root.theme-dark .legend-row {
+  color: #e5e7eb;
+  background: #0f172a;
+  border-color: #1f2937;
+}
+
+:root.theme-dark .pie::after {
+  background: #0f172a;
+}
+
+:root.theme-dark .edit-block {
+  background: #0f172a;
+  border-color: #1f2937;
+}
+
+:root.theme-dark .inline-label input {
+  background: #111827;
+  border-color: #1f2937;
+  color: #e5e7eb;
+}
+
+.day-meals {
+  margin-top: 12px;
+}
+
+.meal-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 10px;
+}
+
+.meal-list li {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.meal-list .meal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.meal-list .pill {
+  display: inline-block;
+  padding: 4px 8px;
+  background: #e8edff;
+  color: #1d4ed8;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.meal-list .meal-time {
+  font-size: 12px;
+  color: #475569;
+}
+
+.meal-list .meal-text {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.meal-list .macro.small {
+  font-size: 13px;
+  color: #334155;
+}
+
+:root.theme-dark .meal-list li {
+  background: #fff;
+  border-color: #d4d7de;
+  color: #0f172a;
+}
+
+:root.theme-dark .meal-list .meal-time,
+:root.theme-dark .meal-list .macro.small {
+  color: #475569;
+}
+
+:root.theme-dark .meal-list .pill {
+  background: #e8edff;
+  color: #1d4ed8;
+}
+
+:root.theme-dark .day-meals h3,
+:root.theme-dark .day-meals,
+:root.theme-dark .meal-list li,
+:root.theme-dark .meal-list .meal-text,
+:root.theme-dark .meal-list .meal-time {
+  color: #0f172a !important;
+}
+
 @media (max-width: 720px) {
   .input-row {
     grid-template-columns: 1fr;
@@ -584,6 +859,10 @@ body.theme-dark,
     border-top: 1px solid #e2e8f0;
     box-shadow: 0 -6px 20px rgba(15, 23, 42, 0.08);
     backdrop-filter: blur(8px);
+  }
+  .pie-block {
+    grid-template-columns: 1fr;
+    justify-items: center;
   }
   .mobile-nav .tab {
     padding: 10px 8px;

@@ -47,19 +47,30 @@ model Meal {
 }
 
 model MealItem {
-  id        String   @id @default(uuid())
-  meal      Meal     @relation(fields: [mealId], references: [id])
-  mealId    String
-  foodId    String
-  name      String
-  quantity  Float
-  unit      String
-  grams     Float
-  calories  Float
-  protein_g Float
-  carbs_g   Float
-  fat_g     Float
-  source    String
+  id               String   @id @default(uuid())
+  meal             Meal     @relation(fields: [mealId], references: [id])
+  mealId           String
+  foodId           String
+  name             String
+  quantity         Float
+  unit             String
+  grams            Float
+  calories         Float
+  protein_g        Float
+  carbs_g          Float
+  fat_g            Float
+  fiber_g          Float    @default(0)
+  sugars_g         Float    @default(0)
+  saturated_fat_g  Float    @default(0)
+  trans_fat_g      Float    @default(0)
+  cholesterol_mg   Float    @default(0)
+  sodium_mg        Float    @default(0)
+  vitamin_d_mcg    Float    @default(0)
+  calcium_mg       Float    @default(0)
+  iron_mg          Float    @default(0)
+  potassium_mg     Float    @default(0)
+  userEdited       Boolean  @default(false)
+  source           String
 }
 
 model DailyTotal {

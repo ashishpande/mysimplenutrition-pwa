@@ -32,22 +32,24 @@ const JWT_SECRET = process.env.JWT_SECRET || (env === "test" ? "dev-secret-chang
 // Force LLM lookups in non-production by default; override with FORCE_LLM env.
 const FORCE_LLM = process.env.FORCE_LLM === "true" || env !== "production";
 const useGroq = !!process.env.GROQ_API_KEY;
+const hasOllama = !!process.env.OLLAMA_HOST;
 const estimateNutrition = async (name) => {
-  try {
-    return await estimateNutritionOllama(name);
-  } catch (err) {
-    if (useGroq) {
-      try {
-        return await estimateNutritionGroq(name);
-      } catch (err2) {
-        // eslint-disable-next-line no-console
-        console.error("[llm] groq fallback failed", err2.message || err2);
+  if (hasOllama) {
+    try {
+      return await estimateNutritionOllama(name);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[llm] ollama failed, trying groq", err.message || err);
+      if (useGroq) {
+        return estimateNutritionGroq(name);
       }
+      throw err;
     }
-    // eslint-disable-next-line no-console
-    console.error("[llm] ollama failed", err.message || err);
-    throw err;
   }
+  if (useGroq) {
+    return estimateNutritionGroq(name);
+  }
+  throw new Error("no_llm_available");
 };
 
 // Debug info on startup for LLM selection.
@@ -59,6 +61,8 @@ console.log(
   FORCE_LLM,
   "GROQ_API_KEY set:",
   !!process.env.GROQ_API_KEY,
+  "OLLAMA_HOST set:",
+  hasOllama,
   "OLLAMA_HOST:",
   process.env.OLLAMA_HOST || "default"
 );

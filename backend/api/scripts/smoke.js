@@ -96,10 +96,13 @@ async function createMeal(token) {
   return data.meal;
 }
 
-async function editFirstItem(token, meal) {
-  const item = meal.items?.[0];
-  if (!item) {
-    console.log("no items to edit");
+async function editFirstItem(token, meal, dayData) {
+  // Prefer item from daily fetch (includes DB ids), else fall back to meal payload.
+  const dayMeal =
+    dayData?.meals?.find((m) => m.id === meal.id) || (dayData?.meals && dayData.meals[0]) || null;
+  const item = dayMeal?.items?.[0] || meal.items?.[0];
+  if (!item?.id) {
+    console.log("no items with ids to edit");
     return;
   }
   const deltaProtein = 1;
@@ -135,11 +138,17 @@ async function main() {
   await register();
   const token = await login();
   const meal = await createMeal(token);
-  await editFirstItem(token, meal);
   const daily = await fetchDaily(token);
+  await editFirstItem(token, meal, daily);
+  const dailyAfter = await fetchDaily(token);
   const updatedItem = daily.meals?.flatMap((m) => m.items || []).find((i) => i.id === meal.items?.[0]?.id);
+  const updatedItem2 =
+    dailyAfter.meals?.flatMap((m) => m.items || []).find((i) => i.id === meal.items?.[0]?.id) ||
+    dailyAfter.meals?.flatMap((m) => m.items || [])[0];
   if (updatedItem) {
     console.log("verified edited item protein:", updatedItem.protein_g || updatedItem.nutrients?.protein_g);
+  } else if (updatedItem2) {
+    console.log("found edited item after second fetch:", updatedItem2.protein_g || updatedItem2.nutrients?.protein_g);
   } else {
     console.log("warning: edited item not found in daily response");
   }

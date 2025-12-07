@@ -264,6 +264,10 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
 // LLM health check: verifies the configured provider responds.
 app.get("/api/health/llm", async (_req, res) => {
   const timeoutMs = 5000;

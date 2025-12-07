@@ -1,26 +1,15 @@
-FROM node:20-bullseye
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Install deps first for better caching
 COPY package*.json ./
-RUN npm install --production
+COPY prisma ./prisma/
 
-# System deps for Prisma (OpenSSL 1.1 on bullseye)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends libssl1.1 ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+RUN npm ci --only=production && \
+    npx prisma generate
 
-# Prisma schema and sources
-COPY prisma ./prisma
-COPY src ./src
+COPY src ./src/
 
-# Generate Prisma client at build time
-RUN npx prisma generate
+EXPOSE 8080
 
-ENV PORT=4000 \
-    HOST=0.0.0.0
-
-EXPOSE 4000
-
-CMD ["node", "src/server.js"]
+CMD npx prisma migrate deploy && node src/server.js

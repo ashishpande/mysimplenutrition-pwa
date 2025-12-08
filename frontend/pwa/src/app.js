@@ -1090,12 +1090,20 @@ function updateEditingField(field, value) {
 }
 
 function cancelEdit() {
-  state.editingItem = null;
+  if (!state.editingItem) return render();
+  const pendingChanges = Object.keys(state.editingItem.values || {}).length > 0;
+  const { mealId, itemId } = state.editingItem;
   if (editSaveTimeout) {
     clearTimeout(editSaveTimeout);
     editSaveTimeout = null;
   }
-  render();
+  if (pendingChanges) {
+    saveItemEdits(mealId, itemId);
+    state.editingItem = null;
+  } else {
+    state.editingItem = null;
+    render();
+  }
 }
 
 async function saveItemEdits(mealId, itemId) {

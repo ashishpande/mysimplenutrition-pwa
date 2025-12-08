@@ -734,6 +734,8 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
     });
   }
 
+  const total = items.reduce((acc, item) => accumulateNutrients(acc, item.nutrients), { ...emptyNutrients });
+
   const mealId = uuid();
   // Always use client-provided local date
   const dateStr = clientDateStr || new Date().toISOString().slice(0, 10);
@@ -838,10 +840,10 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
       await tx.dailyTotal.upsert({
         where: { userId_date: { userId, date: new Date(dateStr) } },
         update: {
-          calories: { increment: total.calories },
-          protein_g: { increment: total.protein_g },
-          carbs_g: { increment: total.carbs_g },
-          fat_g: { increment: total.fat_g },
+          calories: { increment: mealTotals.calories },
+          protein_g: { increment: mealTotals.protein_g },
+          carbs_g: { increment: mealTotals.carbs_g },
+          fat_g: { increment: mealTotals.fat_g },
         },
         create: {
           userId,

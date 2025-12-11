@@ -659,7 +659,9 @@ function fallbackExtractFoods(text) {
 function computeLocalDayWindow(dateStr, tzOffsetMinutes) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const offsetMs = tzOffsetMinutes * 60000;
-  const startUtc = new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - offsetMs);
+  // Convert local midnight to the corresponding UTC instant by ADDING the offset.
+  // Example: PST offset 480 -> local midnight is 08:00 UTC the same day.
+  const startUtc = new Date(Date.UTC(y, m - 1, d, 0, 0, 0) + offsetMs);
   const endUtc = new Date(startUtc.getTime() + 86400000);
   return { startUtc, endUtc };
 }
@@ -878,11 +880,7 @@ app.get("/api/daily", authMiddleware, (req, res) => {
   const userId = req.user.userId;
   const date = req.query.date || new Date().toISOString().slice(0, 10);
   const tzOffsetMinutes = Number(req.query.tzOffsetMinutes || 0);
-  const [y, m, d] = date.split("-").map(Number);
-  const offsetMs = tzOffsetMinutes * 60000;
-  // Local midnight converted to UTC window: subtract offset to get UTC time
-  const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - offsetMs);
-  const end = new Date(start.getTime() + 86400000);
+  const { startUtc: start, endUtc: end } = computeLocalDayWindow(date, tzOffsetMinutes);
   prisma.meal
     .findMany({
       where: { userId, consumedAt: { gte: start, lt: end } },
@@ -1030,8 +1028,8 @@ app.patch("/api/meals/:mealId/items/:itemId", authMiddleware, async (req, res) =
       );
       // Update daily totals to reflect change
       const dateStr = new Date(meal.consumedAt).toISOString().slice(0, 10);
-      await recomputeDayTotals(userId, dateStr, 0);
-      res.json({ ok: true, mealTotals });
+      const dayTotals = await recomputeDayTotals(userId, dateStr, 0);
+      res.json({ ok: true, mealTotals, dayTotals });
     });
   } catch (err) {
     // eslint-disable-next-line no-console

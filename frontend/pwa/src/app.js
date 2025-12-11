@@ -123,7 +123,6 @@ function renderTodaySection(result, today) {
         ${formatNumber(dayTotals?.calories, 0)} kcal — P: ${formatNumber(dayTotals?.protein_g, 1)}g | C: ${formatNumber(dayTotals?.carbs_g, 1)}g | F: ${formatNumber(dayTotals?.fat_g, 1)}g
       </div>
       ${renderNutrientGrid(dayTotals)}
-      ${renderPie(dayTotals, "Day breakdown")}
     </div>
     `
     : "";
@@ -889,7 +888,8 @@ async function submitText() {
   const tzOffsetMinutes = new Date().getTimezoneOffset();
   const now = new Date();
   const clientDateStr = formatLocalYMD(now);
-  const consumedAt = new Date(now.getTime() - tzOffsetMinutes * 60000).toISOString();
+  // Store the actual UTC timestamp; toISOString already converts local time to UTC.
+  const consumedAt = now.toISOString();
   state.status = "loading";
   state.error = null;
   render();
@@ -1129,34 +1129,42 @@ async function saveItemEdits(mealId, itemId) {
     });
     const data = await parseJsonSafe(res);
     if (!res.ok) throw new Error(data?.error || "Failed to update item");
+    // Refresh the server view so we have authoritative items and totals.
     await fetchToday();
-    if (state.today?.meals?.length && state.result?.meal?.id === mealId) {
-      const updated = state.today.meals.find((m) => m.id === mealId);
-      if (updated) {
-        state.result.meal = {
-          ...updated,
-          total: computeTotalsFromItems(updated.items || []),
-          items: updated.items.map((i) => ({
-            ...i,
-            nutrients: {
-              calories: i.calories,
-              protein_g: i.protein_g,
-              carbs_g: i.carbs_g,
-              fat_g: i.fat_g,
-              fiber_g: i.fiber_g,
-              sugars_g: i.sugars_g,
-              saturated_fat_g: i.saturated_fat_g,
-              trans_fat_g: i.trans_fat_g,
-              cholesterol_mg: i.cholesterol_mg,
-              sodium_mg: i.sodium_mg,
-              vitamin_d_mcg: i.vitamin_d_mcg,
-              calcium_mg: i.calcium_mg,
-              iron_mg: i.iron_mg,
-              potassium_mg: i.potassium_mg,
-            },
-          })),
-        };
-        state.result.day = state.today.day;
+    const updated = state.today?.meals?.find((m) => m.id === mealId);
+    if (updated) {
+      const itemsWithNutrients = (updated.items || []).map((i) => ({
+        ...i,
+        nutrients: {
+          calories: i.calories,
+          protein_g: i.protein_g,
+          carbs_g: i.carbs_g,
+          fat_g: i.fat_g,
+          fiber_g: i.fiber_g,
+          sugars_g: i.sugars_g,
+          saturated_fat_g: i.saturated_fat_g,
+          trans_fat_g: i.trans_fat_g,
+          cholesterol_mg: i.cholesterol_mg,
+          sodium_mg: i.sodium_mg,
+          vitamin_d_mcg: i.vitamin_d_mcg,
+          calcium_mg: i.calcium_mg,
+          iron_mg: i.iron_mg,
+          potassium_mg: i.potassium_mg,
+        },
+      }));
+      const mealTotal = data?.mealTotals || computeTotalsFromItems(itemsWithNutrients);
+      if (state.result) {
+        state.result.meal = { ...updated, total: mealTotal, items: itemsWithNutrients };
+      }
+      // Keep today.meals in sync with the totals the backend returned.
+      state.today = state.today || { meals: [] };
+      state.today.meals = (state.today.meals || []).map((m) => (m.id === mealId ? { ...m, total: mealTotal, items: itemsWithNutrients } : m));
+    }
+    if (data?.dayTotals) {
+      state.today = state.today || { day: {}, meals: [] };
+      state.today.day = { ...state.today.day, ...data.dayTotals };
+      if (state.result) {
+        state.result.day = { ...state.result?.day, ...data.dayTotals };
       }
     }
   } catch (err) {

@@ -13,7 +13,9 @@
     <link rel="stylesheet" href="./src/styles.css" />
     <script>
       // Set API_BASE here for local dev if needed.
-      window.API_BASE = window.API_BASE || (window.location.hostname === 'localhost' ? "http://localhost:4000/api" : "https://nutrition-api-spring-dust-1526.fly.dev/api");
+      const host = window.location.hostname;
+      const isLocal = host === 'localhost' || host === '127.0.0.1';
+      window.API_BASE = window.API_BASE || (isLocal ? "http://localhost:4000/api" : "https://nutrition-api-spring-dust-1526.fly.dev/api");
     </script>
     <style>
       /* Ensure auth submit button stays visible in dark mode */

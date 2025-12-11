@@ -449,8 +449,12 @@ body.theme-dark .primary,
   color: #0f172a;
 }
 
+.day-summary h3 {
+  color: #0f172a !important;
+}
+
 .day-summary .macro {
-  color: #0f172a;
+  color: #0f172a !important;
 }
 :root.theme-dark .day-summary h3,
 :root.theme-dark .day-summary .macro,

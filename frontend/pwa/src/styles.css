@@ -840,6 +840,31 @@ body.theme-dark,
   color: #0f172a !important;
 }
 
+.day-meals-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 10px;
+}
+
+.day-meals-list .meal-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fff;
+  color: #0f172a;
+}
+
+:root.theme-dark .day-meals-list .meal-item,
+:root.theme-dark .day-meals-list .meal-item .meal-text,
+:root.theme-dark .day-meals-list .meal-item .meal-time,
+:root.theme-dark .day-meals-list .meal-item .macro {
+  color: #0f172a !important;
+  background: #fff;
+  border-color: #d4d7de;
+}
+
 @media (max-width: 720px) {
   .input-row {
     grid-template-columns: 1fr;

@@ -53,6 +53,7 @@ const state = {
     token: "",
   },
   days: [],
+  expandedDays: new Set(),
 };
 
 const appEl = document.getElementById("app");
@@ -573,8 +574,35 @@ function renderApp() {
               days.length
                 ? `<ul class="days">${days
                     .map(
-                      (d) =>
-                        `<li><strong>${d.date}</strong><br/>${d.calories} kcal — P ${d.protein_g}g / C ${d.carbs_g}g / F ${d.fat_g}g</li>`
+                      (d) => {
+                        const dateStr = typeof d.date === 'string' && d.date.includes('T') ? d.date.split('T')[0] : d.date;
+                        const [y, m, day] = dateStr.split("-");
+                        const formatted = `${m}-${day}-${y}`;
+                        const isExpanded = state.expandedDays.has(dateStr);
+                        const mealsHtml = isExpanded && d.meals ? `
+                          <ul class="day-meals-list">
+                            ${d.meals.map(meal => {
+                              const totals = computeTotalsFromItems(meal.items || []);
+                              return `
+                                <li class="meal-item">
+                                  <div class="meal-header">
+                                    <span class="pill">${meal.mealType || "meal"}</span>
+                                    <span class="meal-time">${new Date(meal.consumedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                  </div>
+                                  <div class="meal-text">${meal.text || "Logged meal"}</div>
+                                  <div class="macro small">
+                                    ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
+                                  </div>
+                                </li>
+                              `;
+                            }).join("")}
+                          </ul>
+                        ` : "";
+                        return `<li class="day-item" data-date="${dateStr}" style="cursor: pointer;">
+                          <div><strong>${formatted}</strong><br/>${d.calories} kcal — P ${d.protein_g}g / C ${d.carbs_g}g / F ${d.fat_g}g</div>
+                          ${mealsHtml}
+                        </li>`;
+                      }
                     )
                     .join("")}</ul>`
                 : "<p>No data yet.</p>"
@@ -699,6 +727,11 @@ function renderApp() {
       render();
     };
   });
+  if (tab === "history") {
+    document.querySelectorAll(".day-item").forEach((item) => {
+      item.onclick = () => toggleDayExpansion(item.dataset.date);
+    });
+  }
   if (tab === "profile") {
     document.getElementById("profile-first").oninput = (e) => (state.profileForm.firstName = e.target.value);
     document.getElementById("profile-last").oninput = (e) => (state.profileForm.lastName = e.target.value);
@@ -932,12 +965,42 @@ async function fetchDays() {
     });
     const data = await parseJsonSafe(res);
     if (!res.ok) throw new Error(data?.error || "Failed to load days");
-    state.days = (data.days || []).map((d) => ({
-      ...d,
-      date: formatLocalYMD(new Date(d.date)),
-    }));
+    state.days = (data.days || []);
   } catch (err) {
     state.error = err.message;
+  }
+}
+
+async function fetchDayMeals(dateStr) {
+  if (!state.auth.accessToken) return null;
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  try {
+    const res = await fetch(`${API_BASE}/daily?date=${dateStr}&tzOffsetMinutes=${tzOffsetMinutes}`, {
+      headers: { Authorization: `Bearer ${state.auth.accessToken}` },
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) return null;
+    return data.meals || [];
+  } catch (err) {
+    return null;
+  }
+}
+
+async function toggleDayExpansion(dateStr) {
+  const normalizedDate = typeof dateStr === 'string' && dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+  if (state.expandedDays.has(normalizedDate)) {
+    state.expandedDays.delete(normalizedDate);
+    render();
+  } else {
+    state.expandedDays.add(normalizedDate);
+    const day = state.days.find(d => {
+      const dDate = typeof d.date === 'string' && d.date.includes('T') ? d.date.split('T')[0] : d.date;
+      return dDate === normalizedDate;
+    });
+    if (day && !day.meals) {
+      day.meals = await fetchDayMeals(normalizedDate);
+    }
+    render();
   }
 }
 

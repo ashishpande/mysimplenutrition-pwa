@@ -593,6 +593,34 @@ function renderApp() {
                                   <div class="macro small">
                                     ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
                                   </div>
+                                  ${
+                                    (meal.items || []).length
+                                      ? `<ul class="meal-items details">
+                                          ${meal.items
+                                            .map((item) => {
+                                              const n = item.nutrients || item;
+                                              return `
+                                                <li>
+                                                  <div class="item-title">${item.name || "Item"}</div>
+                                                  <div class="macro small">
+                                                    Calories: ${formatNumber(n.calories, 0)} kcal |
+                                                    Protein: ${formatNumber(n.protein_g, 1)}g |
+                                                    Carbs: ${formatNumber(n.carbs_g, 1)}g |
+                                                    Fiber: ${formatNumber(n.fiber_g, 1)}g |
+                                                    Sugar: ${formatNumber(n.sugars_g, 1)}g |
+                                                    Fat: ${formatNumber(n.fat_g, 1)}g |
+                                                    Sat: ${formatNumber(n.saturated_fat_g, 1)}g |
+                                                    Trans: ${formatNumber(n.trans_fat_g, 1)}g |
+                                                    Chol: ${formatNumber(n.cholesterol_mg, 0)}mg |
+                                                    Sodium: ${formatNumber(n.sodium_mg, 0)}mg
+                                                  </div>
+                                                </li>
+                                              `;
+                                            })
+                                            .join("")}
+                                        </ul>`
+                                      : ""
+                                  }
                                 </li>
                               `;
                             }).join("")}

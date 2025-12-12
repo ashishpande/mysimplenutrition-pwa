@@ -39,7 +39,8 @@ header p {
 .brand-block {
   padding: 8px 10px;
   border-radius: 12px;
-  background: #f4f7ff;
+  background: linear-gradient(135deg, #e8f1ff, #f4f7ff);
+  border: 1px solid #d7e3ff;
 }
 
 .app-header {
@@ -228,6 +229,10 @@ body.theme-dark .primary,
 .macro {
   color: #0f172a;
   font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  line-height: 1.5;
 }
 
 .total {
@@ -528,6 +533,19 @@ body.theme-dark .primary,
   background: linear-gradient(135deg, #ffffff, #f7f9fd);
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
   color: #0b1224;
+  transition: all 0.2s ease;
+}
+
+.days li:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+  border-color: #0ea5e9;
+}
+
+.expand-icon {
+  font-size: 12px;
+  color: #0ea5e9;
+  transition: transform 0.2s ease;
 }
 
 .checkbox {
@@ -903,4 +921,86 @@ body.theme-dark,
   body {
     padding-bottom: 72px;
   }
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: #0ea5e9;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.toast {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  padding: 12px 18px;
+  background: #10b981;
+  color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  font-weight: 600;
+  z-index: 1000;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(400px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.tutorial-banner {
+  margin: 12px 0;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #dbeafe, #eff6ff);
+  border: 1px solid #93c5fd;
+  border-radius: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+:root.theme-dark .tutorial-banner {
+  background: linear-gradient(135deg, #1e3a8a, #1e40af);
+  border-color: #3b82f6;
+  color: #e5e7eb;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #64748b;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.empty-state h3 {
+  margin: 8px 0;
+  color: #475569;
+}
+
+.empty-state p {
+  margin: 8px 0;
+  color: #64748b;
+}
+
+:root.theme-dark .empty-state h3 {
+  color: #94a3b8;
+}
+
+:root.theme-dark .empty-state p {
+  color: #64748b;
 }

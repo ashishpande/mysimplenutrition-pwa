@@ -377,7 +377,7 @@ function renderAuth() {
     <div class="shell narrow">
       <header>
         <div class="brand-block">
-          <h1>My Simple Nutrition Tracker</h1>
+          <h1>mySimpleNutritionTracker</h1>
           <p>Sign in to log meals and see reports.</p>
         </div>
         <div class="theme-toggle">
@@ -524,7 +524,7 @@ function renderApp() {
     <div class="shell">
       <header class="app-header">
         <div class="brand-block">
-          <h1>My Simple Nutrition Tracker</h1>
+          <h1>mySimpleNutritionTracker</h1>
           <p>Hi ${displayName}</p>
         </div>
         <div class="tabs desktop-tabs">

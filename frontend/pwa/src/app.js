@@ -16,6 +16,8 @@ const state = {
   error: null,
   updateAvailable: false,
   theme: storedTheme, // auto | light | dark
+  toast: null,
+  showTutorial: !localStorage.getItem("tutorialSeen"),
   auth: {
     mode: "login",
     email: "",
@@ -54,12 +56,29 @@ const state = {
   },
   days: [],
   expandedDays: new Set(),
+  loadingToday: false,
+  loadingDays: false,
 };
 
 const appEl = document.getElementById("app");
 
 function isDesktopLike() {
   return window.matchMedia ? window.matchMedia("(pointer: fine)").matches : true;
+}
+
+function showToast(message, type = "success") {
+  state.toast = { message, type };
+  render();
+  setTimeout(() => {
+    state.toast = null;
+    render();
+  }, 3000);
+}
+
+function dismissTutorial() {
+  state.showTutorial = false;
+  localStorage.setItem("tutorialSeen", "true");
+  render();
 }
 
 function renderTodaySection(result, today) {
@@ -120,9 +139,7 @@ function renderTodaySection(result, today) {
     ? `
     <div class="day day-summary">
       <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-      <div class="macro">
-        ${formatNumber(dayTotals?.calories, 0)} kcal — P: ${formatNumber(dayTotals?.protein_g, 1)}g | C: ${formatNumber(dayTotals?.carbs_g, 1)}g | F: ${formatNumber(dayTotals?.fat_g, 1)}g
-      </div>
+      ${renderMiniBars(dayTotals)}
       ${renderNutrientGrid(dayTotals)}
     </div>
     `
@@ -154,7 +171,13 @@ function renderTodaySection(result, today) {
         </div>`
       : "";
 
-  if (!mealSection && !daySection && !todayMealsSection) return "<p>No meal yet.</p>";
+  if (!mealSection && !daySection && !todayMealsSection) return `
+    <div class="empty-state">
+      <div class="empty-icon">🍽️</div>
+      <h3>No meals logged yet</h3>
+      <p>Use the voice button or text box above to log your first meal!</p>
+    </div>
+  `;
   return `${mealSection}${daySection}${todayMealsSection}`;
 }
 
@@ -286,6 +309,36 @@ function renderNutrientGrid(total) {
       <div class="nutrient-pill">Calcium <strong>${formatNumber(t.calcium_mg, 0)}mg</strong></div>
       <div class="nutrient-pill">Iron <strong>${formatNumber(t.iron_mg, 1)}mg</strong></div>
       <div class="nutrient-pill">Potassium <strong>${formatNumber(t.potassium_mg, 0)}mg</strong></div>
+    </div>
+  `;
+}
+
+function renderMiniBars(total) {
+  const t = normalizeTotals(total);
+  const rows = [
+    { label: "Calories", value: t.calories, unit: "kcal", color: "#2563eb" },
+    { label: "Protein", value: t.protein_g, unit: "g", color: "#10b981" },
+    { label: "Carbs", value: t.carbs_g, unit: "g", color: "#f59e0b" },
+    { label: "Fat", value: t.fat_g, unit: "g", color: "#6366f1" },
+    { label: "Sugar", value: t.sugars_g, unit: "g", color: "#ef4444" },
+  ];
+  const max = Math.max(...rows.map((r) => r.value), 1);
+  return `
+    <div class="mini-bars">
+      ${rows
+        .map((r) => {
+          const pct = Math.min(100, Math.round((r.value / max) * 100));
+          return `
+            <div class="bar-row">
+              <span class="bar-label">${r.label}</span>
+              <div class="bar-track">
+                <div class="bar-fill" style="width:${pct}%;background:${r.color};"></div>
+              </div>
+              <span class="bar-value">${formatNumber(r.value, r.unit === "kcal" ? 0 : 1)}${r.unit}</span>
+            </div>
+          `;
+        })
+        .join("")}
     </div>
   `;
 }
@@ -514,6 +567,9 @@ function renderAuth() {
   if (document.getElementById("theme-btn")) {
     document.getElementById("theme-btn").onclick = toggleTheme;
   }
+  if (document.getElementById("dismiss-tutorial")) {
+    document.getElementById("dismiss-tutorial").onclick = dismissTutorial;
+  }
 }
 
 function renderApp() {
@@ -536,6 +592,21 @@ function renderApp() {
         <button class="ghost" id="logout-btn">Logout</button>
       </header>
       ${
+        state.toast
+          ? `<div class="toast toast-${state.toast.type}">${state.toast.message}</div>`
+          : ""
+      }
+      ${
+        state.showTutorial
+          ? `<div class="tutorial-banner">
+              <div>
+                <strong>👋 Welcome!</strong> Speak or type what you ate (e.g., "I had eggs and toast for breakfast"), then click Submit.
+              </div>
+              <button class="ghost small" id="dismiss-tutorial">Got it</button>
+            </div>`
+          : ""
+      }
+      ${
         state.updateAvailable
           ? `<div class="update-banner">
               <span>New version available.</span>
@@ -557,7 +628,7 @@ function renderApp() {
               <textarea id="text-input" placeholder="e.g., I ate egg and toast for breakfast">${text}</textarea>
               <button id="submit-btn" class="primary">Submit</button>
             </div>
-            <div class="status">${status === "loading" ? "Processing..." : ""} ${error ? `<span class="error">${error}</span>` : ""}</div>
+            <div class="status">${status === "loading" ? "Processing<span class='spinner'></span>" : ""} ${error ? `<span class="error">${error}</span>` : ""}</div>
           </section>
           <section class="card">
             <h2>Meal result</h2>
@@ -579,7 +650,7 @@ function renderApp() {
                         const [y, m, day] = dateStr.split("-");
                         const formatted = `${m}-${day}-${y}`;
                         const isExpanded = state.expandedDays.has(dateStr);
-                        const mealsHtml = isExpanded && d.meals ? `
+                        const mealsHtml = isExpanded && d.loading ? `<div style="padding: 12px; text-align: center;">Loading<span class='spinner'></span></div>` : isExpanded && d.meals ? `
                           <ul class="day-meals-list">
                             ${d.meals.map(meal => {
                               const totals = computeTotalsFromItems(meal.items || []);
@@ -627,13 +698,20 @@ function renderApp() {
                           </ul>
                         ` : "";
                         return `<li class="day-item" data-date="${dateStr}" style="cursor: pointer;">
-                          <div><strong>${formatted}</strong><br/>${d.calories} kcal — P ${d.protein_g}g / C ${d.carbs_g}g / F ${d.fat_g}g</div>
+                          <div style="display: flex; align-items: center; gap: 8px;">
+                            <span class="expand-icon">${isExpanded ? '▼' : '▶'}</span>
+                            <div><strong>${formatted}</strong><br/>${d.calories} kcal — P ${d.protein_g}g / C ${d.carbs_g}g / F ${d.fat_g}g</div>
+                          </div>
                           ${mealsHtml}
                         </li>`;
                       }
                     )
                     .join("")}</ul>`
-                : "<p>No data yet.</p>"
+                : `<div class="empty-state">
+                    <div class="empty-icon">📊</div>
+                    <h3>No history yet</h3>
+                    <p>Your meal history will appear here once you start logging meals.</p>
+                  </div>`
             }
           </section>`
             : ""
@@ -643,7 +721,11 @@ function renderApp() {
             ? `
           <section class="card">
             <h2>7-day trend (Calories)</h2>
-            ${renderTrend(days)}
+            ${days.length ? renderTrend(days) : `<div class="empty-state">
+              <div class="empty-icon">📈</div>
+              <h3>No trend data yet</h3>
+              <p>Log meals for a few days to see your calorie trends.</p>
+            </div>`}
           </section>`
             : ""
         }
@@ -657,15 +739,41 @@ function renderApp() {
                 <h2>Your details</h2>
               </div>
             </div>
-            <div class="form two-col">
-              <label>First name <input type="text" id="profile-first" value="${state.profileForm.firstName || ""}" /></label>
-              <label>Last name <input type="text" id="profile-last" value="${state.profileForm.lastName || ""}" /></label>
-              <label>Height (cm) <input type="number" step="0.1" id="profile-height" value="${state.profileForm.heightCm || ""}" /></label>
-              <label>Weight (kg) <input type="number" step="0.1" id="profile-weight" value="${state.profileForm.weightKg || ""}" /></label>
+            <div class="form">
+              <div class="two-col">
+                <label>First name <input type="text" id="profile-first" value="${state.profileForm.firstName || ""}" /></label>
+                <label>Last name <input type="text" id="profile-last" value="${state.profileForm.lastName || ""}" /></label>
+              </div>
+              <div class="two-col">
+                <label>Height unit
+                  <select id="profile-height-unit">
+                    <option value="cm" ${state.profileForm.heightUnit === "cm" ? "selected" : ""}>cm</option>
+                    <option value="in" ${state.profileForm.heightUnit === "in" ? "selected" : ""}>inches</option>
+                    <option value="ftin" ${state.profileForm.heightUnit === "ftin" ? "selected" : ""}>feet + inches</option>
+                  </select>
+                </label>
+                ${
+                  state.profileForm.heightUnit === "ftin"
+                    ? `
+                      <label>Feet <input type="number" step="1" id="profile-height-feet" value="${state.profileForm.heightFeet || ""}" /></label>
+                      <label>Inches <input type="number" step="0.1" id="profile-height-inches" value="${state.profileForm.heightInches || ""}" /></label>
+                    `
+                    : `<label>Height value <input type="number" step="0.1" id="profile-height-value" value="${state.profileForm.heightValue || ""}" /></label>`
+                }
+              </div>
+              <div class="two-col">
+                <label>Weight unit
+                  <select id="profile-weight-unit">
+                    <option value="kg" ${state.profileForm.weightUnit === "kg" ? "selected" : ""}>kg</option>
+                    <option value="lb" ${state.profileForm.weightUnit === "lb" ? "selected" : ""}>lb</option>
+                  </select>
+                </label>
+                <label>Weight value <input type="number" step="0.1" id="profile-weight-value" value="${state.profileForm.weightValue || ""}" /></label>
+              </div>
             </div>
             <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
             <div class="actions">
-              <button id="profile-save" class="primary">Save changes</button>
+              <button id="profile-save" class="primary">Save changes${state.status === "saving" ? "<span class='spinner'></span>" : ""}</button>
             </div>
           </section>
           <section class="card">
@@ -747,10 +855,7 @@ function renderApp() {
         fetchDays();
       }
       if (state.tab === "profile" && state.auth.user) {
-        state.profileForm.firstName = state.auth.user.firstName || "";
-        state.profileForm.lastName = state.auth.user.lastName || "";
-        state.profileForm.heightCm = state.auth.user.heightCm ?? "";
-        state.profileForm.weightKg = state.auth.user.weightKg ?? "";
+        state.profileForm = buildProfileFormFromUser(state.auth.user);
       }
       render();
     };
@@ -763,8 +868,21 @@ function renderApp() {
   if (tab === "profile") {
     document.getElementById("profile-first").oninput = (e) => (state.profileForm.firstName = e.target.value);
     document.getElementById("profile-last").oninput = (e) => (state.profileForm.lastName = e.target.value);
-    document.getElementById("profile-height").oninput = (e) => (state.profileForm.heightCm = e.target.value);
-    document.getElementById("profile-weight").oninput = (e) => (state.profileForm.weightKg = e.target.value);
+    document.getElementById("profile-height-unit").onchange = (e) => {
+      state.profileForm.heightUnit = e.target.value;
+      render();
+    };
+    if (document.getElementById("profile-height-value")) {
+      document.getElementById("profile-height-value").oninput = (e) => (state.profileForm.heightValue = e.target.value);
+    }
+    if (document.getElementById("profile-height-feet")) {
+      document.getElementById("profile-height-feet").oninput = (e) => (state.profileForm.heightFeet = e.target.value);
+    }
+    if (document.getElementById("profile-height-inches")) {
+      document.getElementById("profile-height-inches").oninput = (e) => (state.profileForm.heightInches = e.target.value);
+    }
+    document.getElementById("profile-weight-unit").onchange = (e) => (state.profileForm.weightUnit = e.target.value);
+    document.getElementById("profile-weight-value").oninput = (e) => (state.profileForm.weightValue = e.target.value);
     document.getElementById("profile-save").onclick = updateProfile;
     if (document.getElementById("mfa-start")) document.getElementById("mfa-start").onclick = startMfaSetup;
     if (document.getElementById("mfa-verify")) document.getElementById("mfa-verify").onclick = verifyMfa;
@@ -799,10 +917,12 @@ function renderApp() {
   if (document.getElementById("theme-btn")) {
     document.getElementById("theme-btn").onclick = toggleTheme;
   }
+  if (document.getElementById("dismiss-tutorial")) {
+    document.getElementById("dismiss-tutorial").onclick = dismissTutorial;
+  }
 }
 
 function renderTrend(days) {
-  if (!days.length) return "<p>No data yet.</p>";
   const max = Math.max(...days.map((d) => d.calories || 0), 1);
   const points = days.map((d, idx) => {
     const x = (idx / Math.max(days.length - 1, 1)) * 100;
@@ -841,6 +961,7 @@ async function submitAuth() {
     render();
     return;
   }
+  state.auth.status = "loading";
   state.error = null;
   try {
     const res = await fetch(`${AUTH_BASE}/auth/${mode === "login" ? "login" : "register"}`, {
@@ -885,10 +1006,13 @@ async function submitAuth() {
     state.status = "idle";
     fetchDays();
     fetchToday();
+    showToast(mode === "login" ? "Logged in" : "Registered");
     render();
   } catch (err) {
     state.error = err.message;
     render();
+  } finally {
+    state.auth.status = "idle";
   }
 }
 
@@ -981,6 +1105,7 @@ async function submitText() {
 
 async function fetchDays() {
   if (!state.auth.accessToken) return;
+  state.loadingDays = true;
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - 6);
@@ -996,6 +1121,8 @@ async function fetchDays() {
     state.days = (data.days || []);
   } catch (err) {
     state.error = err.message;
+  } finally {
+    state.loadingDays = false;
   }
 }
 
@@ -1026,7 +1153,10 @@ async function toggleDayExpansion(dateStr) {
       return dDate === normalizedDate;
     });
     if (day && !day.meals) {
+      day.loading = true;
+      render();
       day.meals = await fetchDayMeals(normalizedDate);
+      day.loading = false;
     }
     render();
   }
@@ -1034,6 +1164,7 @@ async function toggleDayExpansion(dateStr) {
 
 async function fetchToday() {
   if (!state.auth.accessToken) return;
+  state.loadingToday = true;
   const tzOffsetMinutes = new Date().getTimezoneOffset();
   const date = formatLocalYMD(new Date());
   try {
@@ -1049,11 +1180,15 @@ async function fetchToday() {
     // eslint-disable-next-line no-console
     console.error("fetch_today_failed", err);
   } finally {
+    state.loadingToday = false;
     render();
   }
 }
 
 async function updateProfile() {
+  state.status = "saving";
+  state.error = null;
+  render();
   try {
     const res = await fetch(`${API_BASE}/profile`, {
       method: "PUT",
@@ -1064,23 +1199,24 @@ async function updateProfile() {
       body: JSON.stringify({
         firstName: state.profileForm.firstName,
         lastName: state.profileForm.lastName,
-        heightUnit: "cm",
-        heightValue: state.profileForm.heightCm,
-        weightUnit: "kg", 
-        weightValue: state.profileForm.weightKg,
+        heightUnit: state.profileForm.heightUnit,
+        heightValue: state.profileForm.heightUnit === "ftin" ? undefined : state.profileForm.heightValue,
+        heightFeet: state.profileForm.heightUnit === "ftin" ? state.profileForm.heightFeet : undefined,
+        heightInches: state.profileForm.heightUnit === "ftin" ? state.profileForm.heightInches : undefined,
+        weightUnit: state.profileForm.weightUnit,
+        weightValue: state.profileForm.weightValue,
       }),
     });
     const data = await parseJsonSafe(res);
       if (!res.ok) throw new Error(data?.error || "Failed to update profile");
     state.auth.user = data.user;
-    state.profileForm.firstName = data.user.firstName || "";
-    state.profileForm.lastName = data.user.lastName || "";
-    state.profileForm.heightCm = data.user.heightCm ?? "";
-    state.profileForm.weightKg = data.user.weightKg ?? "";
+    state.profileForm = buildProfileFormFromUser(data.user);
     state.error = null;
-    render();
+    showToast("Profile updated successfully!");
   } catch (err) {
     state.error = err.message;
+  } finally {
+    state.status = "idle";
     render();
   }
 }

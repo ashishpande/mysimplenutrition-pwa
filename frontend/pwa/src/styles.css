@@ -24,11 +24,12 @@ body {
 
 header h1 {
   margin: 0 0 8px;
-  font-size: 30px;
+  font-size: clamp(22px, 6vw, 30px);
   letter-spacing: -0.02em;
   font-family: "Playfair Display", "Space Grotesk", serif;
   color: #0f3d91;
   font-weight: 800;
+  word-break: break-word;
 }
 
 header p {
@@ -62,6 +63,23 @@ header p {
 main {
   display: grid;
   gap: 18px;
+}
+
+@media (max-width: 640px) {
+  .app-header {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    text-align: left;
+  }
+  .tabs.desktop-tabs {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    row-gap: 6px;
+  }
+  .brand-block {
+    padding: 10px 12px;
+  }
 }
 
 .card {
@@ -1004,6 +1022,14 @@ body.theme-dark,
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .tutorial-banner {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
 }
 
 :root.theme-dark .tutorial-banner {

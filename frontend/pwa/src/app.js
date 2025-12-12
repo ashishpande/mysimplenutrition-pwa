@@ -135,15 +135,36 @@ function renderTodaySection(result, today) {
     `
     : "";
 
-  const daySection = dayTotals
-    ? `
+  const daySection =
+    state.loadingToday && !dayTotals
+      ? `
     <div class="day day-summary">
       <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-      ${renderMiniBars(dayTotals)}
+      <p class="muted">Loading day totals...</p>
+    </div>
+    `
+      : dayTotals
+      ? `
+    <div class="day day-summary">
+      <h3>Day so far (${formatLocalYMD(new Date())})</h3>
+      <div class="mini-bar-controls">
+        <span class="mini-label">Mini bars:</span>
+        ${Object.keys(MINI_BAR_FIELDS)
+          .map(
+            (k) => `
+            <label class="pill-check">
+              <input type="checkbox" data-mini="${k}" ${state.miniBarKeys.includes(k) ? "checked" : ""} />
+              <span>${MINI_BAR_FIELDS[k].label}</span>
+            </label>
+          `
+          )
+          .join("")}
+      </div>
+      ${renderMiniBars(dayTotals, state.miniBarKeys)}
       ${renderNutrientGrid(dayTotals)}
     </div>
     `
-    : "";
+      : "";
 
   const todayMealsSection =
     today?.meals?.length
@@ -313,15 +334,26 @@ function renderNutrientGrid(total) {
   `;
 }
 
-function renderMiniBars(total) {
+const MINI_BAR_FIELDS = {
+  calories: { label: "Calories", unit: "kcal", color: "#2563eb" },
+  protein_g: { label: "Protein", unit: "g", color: "#10b981" },
+  carbs_g: { label: "Carbs", unit: "g", color: "#f59e0b" },
+  fat_g: { label: "Fat", unit: "g", color: "#6366f1" },
+  sugars_g: { label: "Sugar", unit: "g", color: "#ef4444" },
+  fiber_g: { label: "Fiber", unit: "g", color: "#06b6d4" },
+  saturated_fat_g: { label: "Sat Fat", unit: "g", color: "#a855f7" },
+};
+
+function renderMiniBars(total, keys = []) {
   const t = normalizeTotals(total);
-  const rows = [
-    { label: "Calories", value: t.calories, unit: "kcal", color: "#2563eb" },
-    { label: "Protein", value: t.protein_g, unit: "g", color: "#10b981" },
-    { label: "Carbs", value: t.carbs_g, unit: "g", color: "#f59e0b" },
-    { label: "Fat", value: t.fat_g, unit: "g", color: "#6366f1" },
-    { label: "Sugar", value: t.sugars_g, unit: "g", color: "#ef4444" },
-  ];
+  const rows = keys
+    .map((k) => {
+      const meta = MINI_BAR_FIELDS[k];
+      if (!meta) return null;
+      const value = t[k] ?? 0;
+      return { ...meta, value };
+    })
+    .filter(Boolean);
   const max = Math.max(...rows.map((r) => r.value), 1);
   return `
     <div class="mini-bars">
@@ -570,10 +602,16 @@ function renderAuth() {
   if (document.getElementById("dismiss-tutorial")) {
     document.getElementById("dismiss-tutorial").onclick = dismissTutorial;
   }
+  document.querySelectorAll("input[data-mini]").forEach((el) => {
+    el.onchange = (e) => toggleMiniBarKey(e.target.dataset.mini);
+  });
 }
 
 function renderApp() {
   const { listening, status, text, result, error, tab, days } = state;
+  if (tab === "today" && !state.today && !state.loadingToday && state.auth.accessToken) {
+    fetchToday();
+  }
   const displayName = [state.auth.user?.firstName, state.auth.user?.lastName].filter(Boolean).join(" ") || state.auth.user?.email || "";
   const themeLabel = state.theme === "auto" ? "Auto" : state.theme === "dark" ? "Dark" : "Light";
   appEl.innerHTML = `
@@ -1307,6 +1345,21 @@ function startEditItem(itemId, mealId) {
     state.today?.meals?.flatMap((m) => m.items || []).find((i) => i.id === itemId);
   const values = targetItem ? getItemNutrientValues(targetItem) : {};
   state.editingItem = { itemId, mealId, values };
+  render();
+}
+
+function toggleMiniBarKey(key) {
+  const keys = [...state.miniBarKeys];
+  const exists = keys.includes(key);
+  if (exists) {
+    state.miniBarKeys = keys.filter((k) => k !== key);
+  } else {
+    if (keys.length >= 5) {
+      showToast("Pick up to 5 mini bars", "error");
+      return;
+    }
+    state.miniBarKeys = [...keys, key];
+  }
   render();
 }
 

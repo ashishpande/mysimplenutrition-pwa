@@ -25,7 +25,8 @@ const servePwa = process.env.SERVE_PWA !== "false" && fs.existsSync(path.join(pw
 const prisma = new PrismaClient();
 
 const app = express();
-const port = process.env.PORT || 4000;
+// Fly expects 8080; keep 4000 for local dev unless PORT is set.
+const port = process.env.PORT || (process.env.FLY_APP_NAME ? 8080 : 4000);
 const host = process.env.HOST || "0.0.0.0";
 const env = process.env.NODE_ENV || "development";
 const JWT_SECRET = process.env.JWT_SECRET || (env === "test" ? "dev-secret-change-me" : null);

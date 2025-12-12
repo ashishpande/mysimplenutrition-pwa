@@ -1,4 +1,4 @@
-const CACHE_NAME = "nutrition-pwa-v2";
+const CACHE_NAME = "nutrition-pwa-v4";
 const ASSETS = ["/", "/src/styles.css", "/src/app.js", "/manifest.json"];
 
 self.addEventListener("install", (event) => {

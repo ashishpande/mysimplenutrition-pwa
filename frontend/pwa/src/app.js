@@ -463,7 +463,6 @@ function renderAuth() {
           <div class="tab-row">
             <button class="${mode === "login" ? "tab active" : "tab"}" id="tab-login">Login</button>
             <button class="${mode === "register" ? "tab active" : "tab"}" id="tab-register">Register</button>
-            <button class="${mode === "reset" ? "tab active" : "tab"}" id="tab-reset">Reset</button>
           </div>
           <div class="auth-layout">
             ${mode === "login" ? `
@@ -529,6 +528,7 @@ function renderAuth() {
               >
                 ${mode === "login" ? "Login" : "Register"}
               </button>
+              ${mode === "login" ? `<button class="link-button" id="forgot-link" type="button">Forgot password?</button>` : ""}
               <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
             </div>
             ${

@@ -307,51 +307,43 @@ app.get("/api/admin/stats", async (req, res) => {
       days.push({ ymd, startUtc, endUtc });
     }
 
-    const dauTrend = await Promise.all(
-      days.map(async (d) => {
-        const activeUsers = await prisma.meal.groupBy({
-          by: ["userId"],
-          where: { consumedAt: { gte: d.startUtc, lt: d.endUtc } },
-        });
-        return { date: d.ymd, count: activeUsers.length };
-      })
-    );
+    const dauTrend = [];
+    const newUsersTrend = [];
+    const activityTrend = [];
+    for (const d of days) {
+      const dayMeals = await prisma.meal.findMany({
+        where: { consumedAt: { gte: d.startUtc, lt: d.endUtc } },
+        select: { userId: true },
+      });
+      const uniqueUsers = new Set(dayMeals.map((m) => m.userId)).size;
+      dauTrend.push({ date: d.ymd, count: uniqueUsers });
+      const newUsersCount = await prisma.user.count({ where: { createdAt: { gte: d.startUtc, lt: d.endUtc } } });
+      newUsersTrend.push({ date: d.ymd, count: newUsersCount });
+      activityTrend.push({ date: d.ymd, count: dayMeals.length });
+    }
 
-    const newUsersTrend = await Promise.all(
-      days.map(async (d) => {
-        const count = await prisma.user.count({ where: { createdAt: { gte: d.startUtc, lt: d.endUtc } } });
-        return { date: d.ymd, count };
-      })
-    );
-
-    const activityTrend = await Promise.all(
-      days.map(async (d) => {
-        const count = await prisma.meal.count({ where: { consumedAt: { gte: d.startUtc, lt: d.endUtc } } });
-        return { date: d.ymd, count };
-      })
-    );
-
-    // Top users by meal count
-    const mealCounts = await prisma.meal.groupBy({
-      by: ["userId"],
-      _count: { _all: true },
-      orderBy: { _count: { _all: "desc" } },
-      take: 5,
-    });
-    const topUserIds = mealCounts.map((m) => m.userId);
-    const topUsersRaw = await prisma.user.findMany({
-      where: { id: { in: topUserIds } },
-      select: { id: true, email: true, mfaEnabled: true, createdAt: true },
-    });
-    const lastActiveByUser = await prisma.meal.groupBy({
-      by: ["userId"],
-      _max: { consumedAt: true },
-      where: { userId: { in: topUserIds } },
-    });
-    const lastActiveMap = new Map(lastActiveByUser.map((r) => [r.userId, r._max.consumedAt]));
+    // Top users by meal count (simple in-memory aggregation)
+    const allMeals = await prisma.meal.findMany({ select: { userId: true, consumedAt: true } });
+    const counts = new Map();
+    const lastActiveMap = new Map();
+    for (const m of allMeals) {
+      counts.set(m.userId, (counts.get(m.userId) || 0) + 1);
+      const prev = lastActiveMap.get(m.userId);
+      if (!prev || new Date(m.consumedAt) > new Date(prev)) {
+        lastActiveMap.set(m.userId, m.consumedAt);
+      }
+    }
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const topUserIds = sorted.map(([id]) => id);
+    const topUsersRaw = topUserIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: topUserIds } },
+          select: { id: true, email: true, mfaEnabled: true, createdAt: true },
+        })
+      : [];
     const topUsers = topUsersRaw.map((u) => ({
       email: u.email,
-      mealCount: mealCounts.find((m) => m.userId === u.id)?._count._all || 0,
+      mealCount: counts.get(u.id) || 0,
       lastActive: lastActiveMap.get(u.id) || u.createdAt || new Date(),
       mfaEnabled: u.mfaEnabled,
     }));
@@ -380,7 +372,7 @@ app.get("/api/admin/stats", async (req, res) => {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("admin_stats_failed", err);
-    res.status(500).json({ error: "server_error" });
+    res.status(500).json({ error: "server_error", detail: err?.message });
   }
 });
 

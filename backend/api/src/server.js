@@ -552,6 +552,41 @@ app.post("/auth/login", authLimiter, async (req, res) => {
   });
 });
 
+// Request password reset: generates a token and logs the link (placeholder for email).
+app.post("/auth/forgot", authLimiter, async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: "email_required" });
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) return res.json({ ok: true }); // don't reveal user existence
+  const token = crypto.randomBytes(24).toString("base64url");
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  await prisma.passwordReset.create({
+    data: { id: uuid(), userId: user.id, token, expiresAt },
+  });
+  // Placeholder for email sending: log the link
+  console.log("[reset] link:", `${process.env.APP_BASE_URL || "http://localhost:5173"}/?resetToken=${token}&email=${encodeURIComponent(email)}`);
+  res.json({ ok: true });
+});
+
+// Reset password using token
+app.post("/auth/reset", authLimiter, async (req, res) => {
+  const { email, token, password, confirmPassword } = req.body || {};
+  if (!email || !token || !password) return res.status(400).json({ error: "missing_fields" });
+  if (password !== confirmPassword) return res.status(400).json({ error: "password_mismatch" });
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) return res.status(400).json({ error: "invalid_token" });
+  const reset = await prisma.passwordReset.findFirst({
+    where: { token, userId: user.id, used: false, expiresAt: { gt: new Date() } },
+  });
+  if (!reset) return res.status(400).json({ error: "invalid_token" });
+  const passwordHash = await bcrypt.hash(password, 10);
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: user.id }, data: { passwordHash } }),
+    prisma.passwordReset.update({ where: { id: reset.id }, data: { used: true } }),
+  ]);
+  res.json({ ok: true });
+});
+
 // Begin MFA setup: returns a secret to be confirmed.
 app.post("/auth/mfa/setup", authLimiter, authMiddleware, async (req, res) => {
   const userId = req.user.userId;

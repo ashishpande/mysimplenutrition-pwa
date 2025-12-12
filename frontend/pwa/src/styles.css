@@ -289,6 +289,18 @@ body.theme-dark .primary,
   font-variant-numeric: tabular-nums;
 }
 
+.inline-actions {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.reset-block .muted {
+  color: #475569;
+  font-size: 13px;
+  margin: 4px 0 8px;
+}
+
 .total {
   margin-top: 8px;
   font-weight: 700;

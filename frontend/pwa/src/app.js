@@ -20,7 +20,7 @@ const state = {
   showTutorial: !localStorage.getItem("tutorialSeen"),
   miniBarKeys: ["calories", "protein_g", "carbs_g", "fat_g", "sugars_g"],
   auth: {
-    mode: "login",
+    mode: "login", // login | register | reset
     email: "",
     password: "",
     confirmPassword: "",
@@ -463,6 +463,7 @@ function renderAuth() {
           <div class="tab-row">
             <button class="${mode === "login" ? "tab active" : "tab"}" id="tab-login">Login</button>
             <button class="${mode === "register" ? "tab active" : "tab"}" id="tab-register">Register</button>
+            <button class="${mode === "reset" ? "tab active" : "tab"}" id="tab-reset">Reset</button>
           </div>
           <div class="auth-layout">
             ${mode === "login" ? `
@@ -530,6 +531,23 @@ function renderAuth() {
               </button>
               <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
             </div>
+            ${
+              mode === "reset"
+                ? `
+                <div class="form reset-block">
+                  <p class="muted">Forgot your password? Send a reset link, then paste the token and set a new password.</p>
+                  <label>Email <input type="email" id="reset-email" value="${email}" /></label>
+                  <div class="inline-actions">
+                    <button id="send-reset" class="ghost" type="button">Send reset link</button>
+                  </div>
+                  <label>Reset token <input type="text" id="reset-token" value="${token}" /></label>
+                  <label>New password <input type="password" id="reset-password" value="${password}" /></label>
+                  <label>Confirm new password <input type="password" id="reset-confirm" value="${confirmPassword}" /></label>
+                  <button id="reset-submit" class="primary" type="button">Reset password</button>
+                </div>
+                `
+                : ""
+            }
           </div>
         </section>
       </main>
@@ -545,6 +563,14 @@ function renderAuth() {
     state.error = null;
     render();
   };
+  const resetTab = document.getElementById("tab-reset");
+  if (resetTab) {
+    resetTab.onclick = () => {
+      state.auth.mode = "reset";
+      state.error = null;
+      render();
+    };
+  }
   document.getElementById("email").oninput = (e) => (state.auth.email = e.target.value);
   document.getElementById("password").oninput = (e) => (state.auth.password = e.target.value);
   if (document.getElementById("first-name")) {
@@ -584,6 +610,18 @@ function renderAuth() {
     document.getElementById("remember-device").onchange = (e) => (state.auth.rememberDevice = e.target.checked);
   }
   document.getElementById("auth-submit").onclick = submitAuth;
+  const resetEmail = document.getElementById("reset-email");
+  if (resetEmail) resetEmail.oninput = (e) => (state.auth.email = e.target.value);
+  const resetToken = document.getElementById("reset-token");
+  if (resetToken) resetToken.oninput = (e) => (state.auth.token = e.target.value);
+  const resetPass = document.getElementById("reset-password");
+  if (resetPass) resetPass.oninput = (e) => (state.auth.password = e.target.value);
+  const resetConfirm = document.getElementById("reset-confirm");
+  if (resetConfirm) resetConfirm.oninput = (e) => (state.auth.confirmPassword = e.target.value);
+  const sendResetBtn = document.getElementById("send-reset");
+  if (sendResetBtn) sendResetBtn.onclick = sendResetLink;
+  const resetSubmit = document.getElementById("reset-submit");
+  if (resetSubmit) resetSubmit.onclick = resetPassword;
   if (document.getElementById("theme-btn")) {
     document.getElementById("theme-btn").onclick = toggleTheme;
   }
@@ -976,6 +1014,10 @@ function renderTrend(days) {
 
 async function submitAuth() {
   const { mode, email, password, confirmPassword, token, mfaRequired, deviceToken, rememberDevice, firstName, lastName } = state.auth;
+  if (mode === "reset") {
+    await resetPassword();
+    return;
+  }
   if (mode === "register" && password !== confirmPassword) {
     state.error = "Passwords do not match.";
     render();
@@ -1033,6 +1075,60 @@ async function submitAuth() {
     render();
   } finally {
     state.auth.status = "idle";
+  }
+}
+
+async function sendResetLink() {
+  try {
+    const res = await fetch(`${AUTH_BASE}/auth/forgot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: state.auth.email }),
+    });
+    if (!res.ok) throw new Error("Unable to send reset link");
+    showToast("Reset link sent (check email/logs)");
+  } catch (err) {
+    state.error = err.message;
+    render();
+  }
+}
+
+async function resetPassword() {
+  const email = state.auth.email;
+  const token = state.auth.token;
+  const password = state.auth.password;
+  const confirmPassword = state.auth.confirmPassword;
+  if (!email || !token || !password) {
+    state.error = "Email, token, and new password are required.";
+    render();
+    return;
+  }
+  if (password !== confirmPassword) {
+    state.error = "Passwords do not match.";
+    render();
+    return;
+  }
+  state.status = "loading";
+  state.error = null;
+  render();
+  try {
+    const res = await fetch(`${AUTH_BASE}/auth/reset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, token, password, confirmPassword }),
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data?.error || "Reset failed");
+    showToast("Password reset. Please login.");
+    state.auth.mode = "login";
+    state.auth.password = "";
+    state.auth.confirmPassword = "";
+    state.auth.token = "";
+  } catch (err) {
+    state.error = err.message;
+  } finally {
+    state.status = "idle";
+    render();
   }
 }
 

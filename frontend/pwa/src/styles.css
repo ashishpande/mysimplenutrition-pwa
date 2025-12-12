@@ -26,6 +26,9 @@ header h1 {
   margin: 0 0 8px;
   font-size: 30px;
   letter-spacing: -0.02em;
+  font-family: "Playfair Display", "Space Grotesk", serif;
+  color: #1d4ed8;
+  font-weight: 800;
 }
 
 header p {

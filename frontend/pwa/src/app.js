@@ -135,47 +135,15 @@ function renderTodaySection(result, today) {
     `
     : "";
 
-  const daySection = (() => {
-    if (state.loadingToday && !dayTotals) {
-      return `
-        <div class="day day-summary">
-          <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-          <p class="muted">Loading day totals...</p>
-        </div>
-      `;
-    }
-    if (dayTotals) {
-      return `
-        <div class="day day-summary">
-          <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-          <div class="mini-bar-controls">
-            <span class="mini-label">Mini bars:</span>
-            ${Object.keys(MINI_BAR_FIELDS)
-              .map(
-                (k) => `
-                <label class="pill-check">
-                  <input type="checkbox" data-mini="${k}" ${state.miniBarKeys.includes(k) ? "checked" : ""} />
-                  <span>${MINI_BAR_FIELDS[k].label}</span>
-                </label>
-              `
-              )
-              .join("")}
-          </div>
-          ${renderMiniBars(dayTotals, state.miniBarKeys)}
-          ${renderNutrientGrid(dayTotals)}
-        </div>
-      `;
-    }
-    if (state.auth.accessToken) {
-      return `
-        <div class="day day-summary">
-          <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-          <p class="muted">No day data yet. <button class="ghost small" id="reload-today">Reload</button></p>
-        </div>
-      `;
-    }
-    return "";
-  })();
+  const daySection = dayTotals
+    ? `
+    <div class="day day-summary">
+      <h3>Day so far (${formatLocalYMD(new Date())})</h3>
+      ${renderMiniBars(dayTotals)}
+      ${renderNutrientGrid(dayTotals)}
+    </div>
+    `
+    : "";
 
   const todayMealsSection =
     today?.meals?.length
@@ -345,14 +313,15 @@ function renderNutrientGrid(total) {
   `;
 }
 
+// Daily values for %DV calculations.
 const MINI_BAR_FIELDS = {
-  calories: { label: "Calories", unit: "kcal", color: "#2563eb" },
-  protein_g: { label: "Protein", unit: "g", color: "#10b981" },
-  carbs_g: { label: "Carbs", unit: "g", color: "#f59e0b" },
-  fat_g: { label: "Fat", unit: "g", color: "#6366f1" },
-  sugars_g: { label: "Sugar", unit: "g", color: "#ef4444" },
-  fiber_g: { label: "Fiber", unit: "g", color: "#06b6d4" },
-  saturated_fat_g: { label: "Sat Fat", unit: "g", color: "#a855f7" },
+  calories: { label: "Calories", unit: "kcal", color: "#2563eb", dv: 2000 },
+  protein_g: { label: "Protein", unit: "g", color: "#10b981", dv: 50 },
+  carbs_g: { label: "Carbs", unit: "g", color: "#f59e0b", dv: 275 },
+  fat_g: { label: "Fat", unit: "g", color: "#6366f1", dv: 78 },
+  sugars_g: { label: "Sugar", unit: "g", color: "#ef4444", dv: 50 },
+  fiber_g: { label: "Fiber", unit: "g", color: "#06b6d4", dv: 28 },
+  saturated_fat_g: { label: "Sat Fat", unit: "g", color: "#a855f7", dv: 20 },
 };
 
 function renderMiniBars(total, keys = []) {
@@ -362,22 +331,29 @@ function renderMiniBars(total, keys = []) {
       const meta = MINI_BAR_FIELDS[k];
       if (!meta) return null;
       const value = t[k] ?? 0;
-      return { ...meta, value };
+      const pctDv = meta.dv ? (value / meta.dv) * 100 : null;
+      return { ...meta, value, pctDv };
     })
     .filter(Boolean);
-  const max = Math.max(...rows.map((r) => r.value), 1);
+  // Scale bars by %DV when available, otherwise relative max.
+  const max = Math.max(
+    ...rows.map((r) => (r.pctDv != null ? Math.min(r.pctDv, 100) : r.value)),
+    1
+  );
   return `
     <div class="mini-bars">
       ${rows
         .map((r) => {
-          const pct = Math.min(100, Math.round((r.value / max) * 100));
+          const pct = r.pctDv != null ? Math.min(100, Math.round(r.pctDv)) : Math.min(100, Math.round((r.value / max) * 100));
+          const valueText = `${formatNumber(r.value, r.unit === "kcal" ? 0 : 1)}${r.unit}`;
+          const pctText = r.pctDv != null ? ` (${Math.round(Math.min(r.pctDv, 999))}% DV)` : "";
           return `
             <div class="bar-row">
               <span class="bar-label">${r.label}</span>
               <div class="bar-track">
                 <div class="bar-fill" style="width:${pct}%;background:${r.color};"></div>
               </div>
-              <span class="bar-value">${formatNumber(r.value, r.unit === "kcal" ? 0 : 1)}${r.unit}</span>
+              <span class="bar-value">${valueText}${pctText}</span>
             </div>
           `;
         })
@@ -613,18 +589,10 @@ function renderAuth() {
   if (document.getElementById("dismiss-tutorial")) {
     document.getElementById("dismiss-tutorial").onclick = dismissTutorial;
   }
-  document.querySelectorAll("input[data-mini]").forEach((el) => {
-    el.onchange = (e) => toggleMiniBarKey(e.target.dataset.mini);
-  });
-  const reloadBtn = document.getElementById("reload-today");
-  if (reloadBtn) reloadBtn.onclick = fetchToday;
 }
 
 function renderApp() {
   const { listening, status, text, result, error, tab, days } = state;
-  if (tab === "today" && !state.today && !state.loadingToday && state.auth.accessToken) {
-    fetchToday();
-  }
   const displayName = [state.auth.user?.firstName, state.auth.user?.lastName].filter(Boolean).join(" ") || state.auth.user?.email || "";
   const themeLabel = state.theme === "auto" ? "Auto" : state.theme === "dark" ? "Dark" : "Light";
   appEl.innerHTML = `
@@ -1358,21 +1326,6 @@ function startEditItem(itemId, mealId) {
     state.today?.meals?.flatMap((m) => m.items || []).find((i) => i.id === itemId);
   const values = targetItem ? getItemNutrientValues(targetItem) : {};
   state.editingItem = { itemId, mealId, values };
-  render();
-}
-
-function toggleMiniBarKey(key) {
-  const keys = [...state.miniBarKeys];
-  const exists = keys.includes(key);
-  if (exists) {
-    state.miniBarKeys = keys.filter((k) => k !== key);
-  } else {
-    if (keys.length >= 5) {
-      showToast("Pick up to 5 mini bars", "error");
-      return;
-    }
-    state.miniBarKeys = [...keys, key];
-  }
   render();
 }
 

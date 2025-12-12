@@ -272,6 +272,120 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
 });
 
+// Basic admin stats (no auth applied; restrict upstream if needed).
+app.options("/api/admin/stats", (_req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  return res.sendStatus(204);
+});
+
+app.get("/api/admin/stats", async (req, res) => {
+  // Allow dashboard to call from any origin.
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  try {
+    const tzOffsetMinutes = Number(req.query.tzOffsetMinutes || 0);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const { startUtc: todayStart, endUtc: todayEnd } = computeLocalDayWindow(todayStr, tzOffsetMinutes);
+
+    const totalUsersPromise = prisma.user.count();
+    const newUsersTodayPromise = prisma.user.count({
+      where: { createdAt: { gte: todayStart, lt: todayEnd } },
+    });
+    const totalMealsPromise = prisma.meal.count();
+    const mealsTodayPromise = prisma.meal.count({
+      where: { consumedAt: { gte: todayStart, lt: todayEnd } },
+    });
+
+    // Trends for last 7 days
+    const days = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const ymd = d.toISOString().slice(0, 10);
+      const { startUtc, endUtc } = computeLocalDayWindow(ymd, tzOffsetMinutes);
+      days.push({ ymd, startUtc, endUtc });
+    }
+
+    const dauTrend = await Promise.all(
+      days.map(async (d) => {
+        const activeUsers = await prisma.meal.groupBy({
+          by: ["userId"],
+          where: { consumedAt: { gte: d.startUtc, lt: d.endUtc } },
+        });
+        return { date: d.ymd, count: activeUsers.length };
+      })
+    );
+
+    const newUsersTrend = await Promise.all(
+      days.map(async (d) => {
+        const count = await prisma.user.count({ where: { createdAt: { gte: d.startUtc, lt: d.endUtc } } });
+        return { date: d.ymd, count };
+      })
+    );
+
+    const activityTrend = await Promise.all(
+      days.map(async (d) => {
+        const count = await prisma.meal.count({ where: { consumedAt: { gte: d.startUtc, lt: d.endUtc } } });
+        return { date: d.ymd, count };
+      })
+    );
+
+    // Top users by meal count
+    const mealCounts = await prisma.meal.groupBy({
+      by: ["userId"],
+      _count: { _all: true },
+      orderBy: { _count: { _all: "desc" } },
+      take: 5,
+    });
+    const topUserIds = mealCounts.map((m) => m.userId);
+    const topUsersRaw = await prisma.user.findMany({
+      where: { id: { in: topUserIds } },
+      select: { id: true, email: true, mfaEnabled: true, createdAt: true },
+    });
+    const lastActiveByUser = await prisma.meal.groupBy({
+      by: ["userId"],
+      _max: { consumedAt: true },
+      where: { userId: { in: topUserIds } },
+    });
+    const lastActiveMap = new Map(lastActiveByUser.map((r) => [r.userId, r._max.consumedAt]));
+    const topUsers = topUsersRaw.map((u) => ({
+      email: u.email,
+      mealCount: mealCounts.find((m) => m.userId === u.id)?._count._all || 0,
+      lastActive: lastActiveMap.get(u.id) || u.createdAt || new Date(),
+      mfaEnabled: u.mfaEnabled,
+    }));
+
+    const [totalUsers, newUsersToday, totalMeals, mealsToday] = await Promise.all([
+      totalUsersPromise,
+      newUsersTodayPromise,
+      totalMealsPromise,
+      mealsTodayPromise,
+    ]);
+
+    res.json({
+      totalUsers,
+      newUsersToday,
+      totalMeals,
+      mealsToday,
+      llmCallsMonth: 0,
+      dbSize: "-",
+      flyHours: 0,
+      pageViews: 0,
+      topUsers,
+      dauTrend,
+      newUsersTrend,
+      activityTrend,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("admin_stats_failed", err);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 // LLM health check: verifies the configured provider responds.
 app.get("/api/health/llm", async (_req, res) => {
   const timeoutMs = 5000;

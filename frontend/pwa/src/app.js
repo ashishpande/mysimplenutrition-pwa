@@ -18,6 +18,7 @@ const state = {
   theme: storedTheme, // auto | light | dark
   toast: null,
   showTutorial: !localStorage.getItem("tutorialSeen"),
+  miniBarKeys: ["calories", "protein_g", "carbs_g", "fat_g", "sugars_g"],
   auth: {
     mode: "login",
     email: "",

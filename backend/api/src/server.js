@@ -83,11 +83,8 @@ if (env !== "test" && (!JWT_SECRET || JWT_SECRET === "dev-secret-change-me")) {
 
 app.use(
   cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error("Not allowed by CORS"));
-    },
+    // For admin dashboard and broad client access, allow all origins.
+    origin: (_origin, cb) => cb(null, true),
     credentials: true,
   })
 );

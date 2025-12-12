@@ -135,36 +135,47 @@ function renderTodaySection(result, today) {
     `
     : "";
 
-  const daySection =
-    state.loadingToday && !dayTotals
-      ? `
-    <div class="day day-summary">
-      <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-      <p class="muted">Loading day totals...</p>
-    </div>
-    `
-      : dayTotals
-      ? `
-    <div class="day day-summary">
-      <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-      <div class="mini-bar-controls">
-        <span class="mini-label">Mini bars:</span>
-        ${Object.keys(MINI_BAR_FIELDS)
-          .map(
-            (k) => `
-            <label class="pill-check">
-              <input type="checkbox" data-mini="${k}" ${state.miniBarKeys.includes(k) ? "checked" : ""} />
-              <span>${MINI_BAR_FIELDS[k].label}</span>
-            </label>
-          `
-          )
-          .join("")}
-      </div>
-      ${renderMiniBars(dayTotals, state.miniBarKeys)}
-      ${renderNutrientGrid(dayTotals)}
-    </div>
-    `
-      : "";
+  const daySection = (() => {
+    if (state.loadingToday && !dayTotals) {
+      return `
+        <div class="day day-summary">
+          <h3>Day so far (${formatLocalYMD(new Date())})</h3>
+          <p class="muted">Loading day totals...</p>
+        </div>
+      `;
+    }
+    if (dayTotals) {
+      return `
+        <div class="day day-summary">
+          <h3>Day so far (${formatLocalYMD(new Date())})</h3>
+          <div class="mini-bar-controls">
+            <span class="mini-label">Mini bars:</span>
+            ${Object.keys(MINI_BAR_FIELDS)
+              .map(
+                (k) => `
+                <label class="pill-check">
+                  <input type="checkbox" data-mini="${k}" ${state.miniBarKeys.includes(k) ? "checked" : ""} />
+                  <span>${MINI_BAR_FIELDS[k].label}</span>
+                </label>
+              `
+              )
+              .join("")}
+          </div>
+          ${renderMiniBars(dayTotals, state.miniBarKeys)}
+          ${renderNutrientGrid(dayTotals)}
+        </div>
+      `;
+    }
+    if (state.auth.accessToken) {
+      return `
+        <div class="day day-summary">
+          <h3>Day so far (${formatLocalYMD(new Date())})</h3>
+          <p class="muted">No day data yet. <button class="ghost small" id="reload-today">Reload</button></p>
+        </div>
+      `;
+    }
+    return "";
+  })();
 
   const todayMealsSection =
     today?.meals?.length
@@ -605,6 +616,8 @@ function renderAuth() {
   document.querySelectorAll("input[data-mini]").forEach((el) => {
     el.onchange = (e) => toggleMiniBarKey(e.target.dataset.mini);
   });
+  const reloadBtn = document.getElementById("reload-today");
+  if (reloadBtn) reloadBtn.onclick = fetchToday;
 }
 
 function renderApp() {

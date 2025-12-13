@@ -63,6 +63,22 @@ const state = {
 
 const appEl = document.getElementById("app");
 
+function maybeInitResetFromUrl() {
+  if (state.auth.mode === "reset" && state.auth.token) return;
+  const params = new URLSearchParams(window.location.search);
+  const resetToken = params.get("resetToken");
+  const email = params.get("email");
+  if (resetToken || email) {
+    state.auth.mode = "reset";
+    if (resetToken) state.auth.token = resetToken;
+    if (email) state.auth.email = decodeURIComponent(email);
+    params.delete("resetToken");
+    params.delete("email");
+    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+    window.history.replaceState({}, "", newUrl);
+  }
+}
+
 function isDesktopLike() {
   return window.matchMedia ? window.matchMedia("(pointer: fine)").matches : true;
 }
@@ -417,6 +433,7 @@ function buildProfileFormFromUser(user) {
 }
 
 function render() {
+  maybeInitResetFromUrl();
   if (!state.auth.accessToken) {
     renderAuth();
   } else {
@@ -610,6 +627,14 @@ function renderAuth() {
     document.getElementById("remember-device").onchange = (e) => (state.auth.rememberDevice = e.target.checked);
   }
   document.getElementById("auth-submit").onclick = submitAuth;
+  const forgotLink = document.getElementById("forgot-link");
+  if (forgotLink) {
+    forgotLink.onclick = () => {
+      state.auth.mode = "reset";
+      state.error = null;
+      render();
+    };
+  }
   const resetEmail = document.getElementById("reset-email");
   if (resetEmail) resetEmail.oninput = (e) => (state.auth.email = e.target.value);
   const resetToken = document.getElementById("reset-token");

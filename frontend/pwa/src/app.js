@@ -480,6 +480,7 @@ function renderAuth() {
           <div class="tab-row">
             <button class="${mode === "login" ? "tab active" : "tab"}" id="tab-login">Login</button>
             <button class="${mode === "register" ? "tab active" : "tab"}" id="tab-register">Register</button>
+            <button class="${mode === "reset" ? "tab active" : "tab"}" id="tab-reset">Reset</button>
           </div>
           <div class="auth-layout">
             ${mode === "login" ? `
@@ -489,65 +490,6 @@ function renderAuth() {
                 <p>Quickly log meals and jump back to your routine.</p>
               </div>
             ` : ""}
-            <div class="form">
-              <label>Email <input type="email" id="email" value="${email}" /></label>
-              <label>Password <input type="password" id="password" value="${password}" /></label>
-              ${
-                mode === "register"
-                  ? `
-                      <label>Confirm password <input type="password" id="confirm-password" value="${confirmPassword}" /></label>
-                      <label>First name <input type="text" id="first-name" value="${firstName}" /></label>
-                      <label>Last name <input type="text" id="last-name" value="${lastName}" /></label>
-                      <div class="two-col">
-                        <label>Height unit
-                          <select id="height-unit">
-                            <option value="cm" ${heightUnit === "cm" ? "selected" : ""}>cm</option>
-                            <option value="in" ${heightUnit === "in" ? "selected" : ""}>inches</option>
-                            <option value="ftin" ${heightUnit === "ftin" ? "selected" : ""}>feet + inches</option>
-                          </select>
-                        </label>
-                        ${
-                          heightUnit === "ftin"
-                            ? `
-                              <label>Feet <input type="number" step="1" id="height-feet" value="${heightFeet}" /></label>
-                              <label>Inches <input type="number" step="0.1" id="height-inches" value="${heightInches}" /></label>
-                            `
-                            : `<label>Height value <input type="number" step="0.1" id="height-value" value="${heightValue}" /></label>`
-                        }
-                        <label>Weight unit
-                          <select id="weight-unit">
-                            <option value="kg" ${weightUnit === "kg" ? "selected" : ""}>kg</option>
-                            <option value="lb" ${weightUnit === "lb" ? "selected" : ""}>lb</option>
-                          </select>
-                        </label>
-                        <label>Weight value <input type="number" step="0.1" id="weight-value" value="${weightValue}" /></label>
-                      </div>
-                    `
-                  : ""
-              }
-              ${
-                mfaRequired
-                  ? `<label>Authenticator code <input type="text" id="token" value="${token}" /></label>`
-                  : ""
-              }
-              ${
-                mfaRequired
-                  ? `<label class="checkbox">
-                      <input type="checkbox" id="remember-device" ${rememberDevice ? "checked" : ""} />
-                      Remember this device
-                    </label>`
-                  : ""
-              }
-              <button
-                id="auth-submit"
-                class="primary"
-                style="background: linear-gradient(135deg, #0ea5e9, #2563eb); color: #fff; border-color: #2563eb;"
-              >
-                ${mode === "login" ? "Login" : "Register"}
-              </button>
-              ${mode === "login" ? `<button class="link-button" id="forgot-link" type="button">Forgot password?</button>` : ""}
-              <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
-            </div>
             ${
               mode === "reset"
                 ? `
@@ -562,8 +504,68 @@ function renderAuth() {
                   <label>Confirm new password <input type="password" id="reset-confirm" value="${confirmPassword}" /></label>
                   <button id="reset-submit" class="primary" type="button">Reset password</button>
                 </div>
-                `
-                : ""
+              `
+                : `
+                <div class="form">
+                  <label>Email <input type="email" id="email" value="${email}" /></label>
+                  <label>Password <input type="password" id="password" value="${password}" /></label>
+                  ${
+                    mode === "register"
+                      ? `
+                          <label>Confirm password <input type="password" id="confirm-password" value="${confirmPassword}" /></label>
+                          <label>First name <input type="text" id="first-name" value="${firstName}" /></label>
+                          <label>Last name <input type="text" id="last-name" value="${lastName}" /></label>
+                          <div class="two-col">
+                            <label>Height unit
+                              <select id="height-unit">
+                                <option value="cm" ${heightUnit === "cm" ? "selected" : ""}>cm</option>
+                                <option value="in" ${heightUnit === "in" ? "selected" : ""}>inches</option>
+                                <option value="ftin" ${heightUnit === "ftin" ? "selected" : ""}>feet + inches</option>
+                              </select>
+                            </label>
+                            ${
+                              heightUnit === "ftin"
+                                ? `
+                                  <label>Feet <input type="number" step="1" id="height-feet" value="${heightFeet}" /></label>
+                                  <label>Inches <input type="number" step="0.1" id="height-inches" value="${heightInches}" /></label>
+                                `
+                                : `<label>Height value <input type="number" step="0.1" id="height-value" value="${heightValue}" /></label>`
+                            }
+                            <label>Weight unit
+                              <select id="weight-unit">
+                                <option value="kg" ${weightUnit === "kg" ? "selected" : ""}>kg</option>
+                                <option value="lb" ${weightUnit === "lb" ? "selected" : ""}>lb</option>
+                              </select>
+                            </label>
+                            <label>Weight value <input type="number" step="0.1" id="weight-value" value="${weightValue}" /></label>
+                          </div>
+                        `
+                      : ""
+                  }
+                  ${
+                    mfaRequired
+                      ? `<label>Authenticator code <input type="text" id="token" value="${token}" /></label>`
+                      : ""
+                  }
+                  ${
+                    mfaRequired
+                      ? `<label class="checkbox">
+                          <input type="checkbox" id="remember-device" ${rememberDevice ? "checked" : ""} />
+                          Remember this device
+                        </label>`
+                      : ""
+                  }
+                  <button
+                    id="auth-submit"
+                    class="primary"
+                    style="background: linear-gradient(135deg, #0ea5e9, #2563eb); color: #fff; border-color: #2563eb;"
+                  >
+                    ${mode === "login" ? "Login" : "Register"}
+                  </button>
+                  ${mode === "login" ? `<button class="link-button" id="forgot-link" type="button">Forgot password?</button>` : ""}
+                  <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
+                </div>
+              `
             }
           </div>
         </section>

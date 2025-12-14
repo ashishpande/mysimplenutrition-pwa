@@ -1,5 +1,6 @@
-// API base can be overridden by window.API_BASE; defaults to localhost API in dev.
-const API_BASE = window.API_BASE || (location.hostname === "localhost" ? "http://localhost:4000/api" : "/api");
+// API base can be overridden by window.API_BASE; defaults to localhost API in dev (localhost or 127.0.0.1).
+const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+const API_BASE = window.API_BASE || (isLocalhost ? "http://localhost:4000/api" : "/api");
 const AUTH_BASE = API_BASE.replace(/\/api$/, "");
 
 const storedDeviceToken = localStorage.getItem("mfaDeviceToken") || "";
@@ -70,6 +71,7 @@ function maybeInitResetFromUrl() {
   const email = params.get("email");
   if (resetToken || email) {
     state.auth.mode = "reset";
+    state.auth.accessToken = null;
     if (resetToken) state.auth.token = resetToken;
     if (email) state.auth.email = decodeURIComponent(email);
     params.delete("resetToken");
@@ -591,8 +593,12 @@ function renderAuth() {
       render();
     };
   }
-  document.getElementById("email").oninput = (e) => (state.auth.email = e.target.value);
-  document.getElementById("password").oninput = (e) => (state.auth.password = e.target.value);
+  if (document.getElementById("email")) {
+    document.getElementById("email").oninput = (e) => (state.auth.email = e.target.value);
+  }
+  if (document.getElementById("password")) {
+    document.getElementById("password").oninput = (e) => (state.auth.password = e.target.value);
+  }
   if (document.getElementById("first-name")) {
     document.getElementById("first-name").oninput = (e) => (state.auth.firstName = e.target.value);
   }
@@ -629,7 +635,9 @@ function renderAuth() {
   if (document.getElementById("remember-device")) {
     document.getElementById("remember-device").onchange = (e) => (state.auth.rememberDevice = e.target.checked);
   }
-  document.getElementById("auth-submit").onclick = submitAuth;
+  if (document.getElementById("auth-submit")) {
+    document.getElementById("auth-submit").onclick = submitAuth;
+  }
   const forgotLink = document.getElementById("forgot-link");
   if (forgotLink) {
     forgotLink.onclick = () => {
@@ -1113,6 +1121,8 @@ async function sendResetLink() {
     return;
   }
   state.status = "loading";
+  state.error = null;
+  render();
   try {
     const res = await fetch(`${AUTH_BASE}/auth/forgot`, {
       method: "POST",

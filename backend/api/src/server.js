@@ -30,6 +30,9 @@ const port = process.env.PORT || (process.env.FLY_APP_NAME ? 8080 : 4000);
 const host = process.env.HOST || "0.0.0.0";
 const env = process.env.NODE_ENV || "development";
 const JWT_SECRET = process.env.JWT_SECRET || (env === "test" ? "dev-secret-change-me" : null);
+const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:5173";
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
 // Force LLM lookups in non-production by default; override with FORCE_LLM env.
 const FORCE_LLM = process.env.FORCE_LLM === "true" || env !== "production";
 const useGroq = !!process.env.GROQ_API_KEY;
@@ -147,6 +150,39 @@ function accumulateNutrients(target, source) {
     next[key] = (next[key] || 0) + (source[key] || 0);
   }
   return next;
+}
+
+async function sendResetEmail(email, token) {
+  if (!RESEND_API_KEY || !RESEND_FROM_EMAIL) {
+    // eslint-disable-next-line no-console
+    console.warn("[reset] resend not configured; logging link");
+    // eslint-disable-next-line no-console
+    console.log("[reset] link:", `${APP_BASE_URL}/?resetToken=${token}&email=${encodeURIComponent(email)}`);
+    return;
+  }
+  const link = `${APP_BASE_URL}/?resetToken=${token}&email=${encodeURIComponent(email)}`;
+  const body = {
+    from: RESEND_FROM_EMAIL,
+    to: email,
+    subject: "Reset your password",
+    html: `<p>You requested a password reset.</p><p>Click <a href="${link}">reset password</a> or copy the link: ${link}</p>`,
+  };
+  // eslint-disable-next-line no-console
+  console.log("[reset] sending via Resend to", email);
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`resend_failed_${resp.status}: ${txt}`);
+  }
+  // eslint-disable-next-line no-console
+  console.log("[reset] email sent via Resend");
 }
 
 async function recomputeDayTotals(userId, dateStr, tzOffsetMinutes = 0) {
@@ -563,8 +599,12 @@ app.post("/auth/forgot", authLimiter, async (req, res) => {
   await prisma.passwordReset.create({
     data: { id: uuid(), userId: user.id, token, expiresAt },
   });
-  // Placeholder for email sending: log the link
-  console.log("[reset] link:", `${process.env.APP_BASE_URL || "http://localhost:5173"}/?resetToken=${token}&email=${encodeURIComponent(email)}`);
+  try {
+    await sendResetEmail(email, token);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("reset_email_failed", err);
+  }
   res.json({ ok: true });
 });
 

@@ -464,30 +464,22 @@ function renderAuth() {
     weightUnit,
     weightValue,
   } = state.auth;
-  const themeLabel = state.theme === "auto" ? "Auto" : state.theme === "dark" ? "Dark" : "Light";
+  const themeIcon = state.theme === "dark" ? "🌙" : state.theme === "light" ? "☀️" : "🌓";
   appEl.innerHTML = `
     <div class="shell narrow">
-      <header>
+      <header class="auth-header">
         <div class="brand-block">
-          <h1>mySimpleNutritionTracker</h1>
+          <h1>Simple Nutrition Tracker</h1>
           <p>Sign in to log meals and see reports.</p>
         </div>
-        <div class="theme-toggle">
-          <span>Theme:</span>
-          <button id="theme-btn" class="ghost">${themeLabel}</button>
-        </div>
+        <button id="theme-btn" class="ghost theme-icon" title="Toggle theme">${themeIcon}</button>
       </header>
       <main>
         <section class="card auth-card">
-          <div class="tab-row">
-            <button class="${mode === "login" ? "tab active" : "tab"}" id="tab-login">Login</button>
-            <button class="${mode === "register" ? "tab active" : "tab"}" id="tab-register">Register</button>
-            <button class="${mode === "reset" ? "tab active" : "tab"}" id="tab-reset">Reset</button>
-          </div>
           <div class="auth-layout">
             ${mode === "login" ? `
               <div class="auth-visual">
-                <div class="pill">Healthy living</div>
+                <div class="pill">Simple food logging</div>
                 <h3>Fuel your day with better choices</h3>
                 <p>Quickly log meals and jump back to your routine.</p>
               </div>
@@ -502,20 +494,50 @@ function renderAuth() {
                     <button id="send-reset" class="ghost" type="button" ${state.status === "loading" ? "disabled" : ""}>Send reset link</button>
                   </div>
                   <label>Reset token <input type="text" id="reset-token" value="${token}" /></label>
-                  <label>New password <input type="password" id="reset-password" value="${password}" /></label>
-                  <label>Confirm new password <input type="password" id="reset-confirm" value="${confirmPassword}" /></label>
+                  <label class="password-field">
+                    <span>New password</span>
+                    <div class="password-input">
+                      <input type="password" id="reset-password" value="${password}" />
+                      <button class="icon-button" type="button" data-toggle-password="reset-password" aria-label="Toggle new password visibility">👁️</button>
+                    </div>
+                  </label>
+                  <label class="password-field">
+                    <span>Confirm new password</span>
+                    <div class="password-input">
+                      <input type="password" id="reset-confirm" value="${confirmPassword}" />
+                      <button class="icon-button" type="button" data-toggle-password="reset-confirm" aria-label="Toggle confirm password visibility">👁️</button>
+                    </div>
+                  </label>
                   <button id="reset-submit" class="primary" type="button" ${state.status === "loading" ? "disabled" : ""}>Reset password</button>
+                  <button id="back-to-login" class="link-button" type="button">Back to login</button>
                   <div class="status">${state.status === "loading" ? "Sending reset..." : ""} ${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
                 </div>
               `
                 : `
                 <div class="form">
-                  <label>Email <input type="email" id="email" value="${email}" /></label>
-                  <label>Password <input type="password" id="password" value="${password}" /></label>
+                  <label>Email <input type="email" id="email" value="${email}" placeholder="you@example.com" /></label>
+                  <label class="password-field">
+                    <span>Password</span>
+                    <div class="password-input">
+                      <input type="password" id="password" value="${password}" />
+                      <button class="icon-button" type="button" data-toggle-password="password" aria-label="Toggle password visibility">👁️</button>
+                    </div>
+                  </label>
+                  ${
+                    mode === "login"
+                      ? `<button class="link-button inline-link" id="forgot-link" type="button">Forgot your password?</button>`
+                      : ""
+                  }
                   ${
                     mode === "register"
                       ? `
-                          <label>Confirm password <input type="password" id="confirm-password" value="${confirmPassword}" /></label>
+                          <label class="password-field">
+                            <span>Confirm password</span>
+                            <div class="password-input">
+                              <input type="password" id="confirm-password" value="${confirmPassword}" />
+                              <button class="icon-button" type="button" data-toggle-password="confirm-password" aria-label="Toggle confirm password visibility">👁️</button>
+                            </div>
+                          </label>
                           <label>First name <input type="text" id="first-name" value="${firstName}" /></label>
                           <label>Last name <input type="text" id="last-name" value="${lastName}" /></label>
                           <div class="two-col">
@@ -560,12 +582,20 @@ function renderAuth() {
                   }
                   <button
                     id="auth-submit"
-                    class="primary"
-                    style="background: linear-gradient(135deg, #0ea5e9, #2563eb); color: #fff; border-color: #2563eb;"
+                    class="${mode === "login" ? "primary" : "ghost"}"
+                    ${state.auth.status === "loading" ? "disabled" : ""}
+                    aria-busy="${state.auth.status === "loading"}"
                   >
-                    ${mode === "login" ? "Login" : "Register"}
+                    ${state.auth.status === "loading" ? `<span class="spinner" aria-hidden="true"></span>` : ""}
+                    ${mode === "login" ? (state.auth.status === "loading" ? "Logging in..." : "Log in") : state.auth.status === "loading" ? "Registering..." : "Register"}
                   </button>
-                  ${mode === "login" ? `<button class="link-button" id="forgot-link" type="button">Forgot password?</button>` : ""}
+                  ${
+                    mode === "login"
+                      ? `
+                        <button class="link-button" id="switch-register" type="button">New here? Create an account</button>
+                      `
+                      : `<button class="link-button" id="switch-login" type="button">Back to login</button>`
+                  }
                   <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
                 </div>
               `
@@ -575,30 +605,21 @@ function renderAuth() {
       </main>
     </div>
   `;
-  document.getElementById("tab-login").onclick = () => {
-    state.auth.mode = "login";
-    state.error = null;
-    render();
-  };
-  document.getElementById("tab-register").onclick = () => {
-    state.auth.mode = "register";
-    state.error = null;
-    render();
-  };
-  const resetTab = document.getElementById("tab-reset");
-  if (resetTab) {
-    resetTab.onclick = () => {
-      state.auth.mode = "reset";
-      state.error = null;
-      render();
-    };
-  }
   if (document.getElementById("email")) {
     document.getElementById("email").oninput = (e) => (state.auth.email = e.target.value);
   }
   if (document.getElementById("password")) {
     document.getElementById("password").oninput = (e) => (state.auth.password = e.target.value);
   }
+  document.querySelectorAll("[data-toggle-password]").forEach((btn) => {
+    btn.onclick = () => {
+      const targetId = btn.dataset.togglePassword;
+      const input = document.getElementById(targetId);
+      if (!input) return;
+      input.type = input.type === "password" ? "text" : "password";
+      btn.textContent = input.type === "password" ? "👁️" : "🙈";
+    };
+  });
   if (document.getElementById("first-name")) {
     document.getElementById("first-name").oninput = (e) => (state.auth.firstName = e.target.value);
   }
@@ -638,6 +659,22 @@ function renderAuth() {
   if (document.getElementById("auth-submit")) {
     document.getElementById("auth-submit").onclick = submitAuth;
   }
+  const switchRegister = document.getElementById("switch-register");
+  if (switchRegister) {
+    switchRegister.onclick = () => {
+      state.auth.mode = "register";
+      state.error = null;
+      render();
+    };
+  }
+  const switchLogin = document.getElementById("switch-login");
+  if (switchLogin) {
+    switchLogin.onclick = () => {
+      state.auth.mode = "login";
+      state.error = null;
+      render();
+    };
+  }
   const forgotLink = document.getElementById("forgot-link");
   if (forgotLink) {
     forgotLink.onclick = () => {
@@ -658,6 +695,14 @@ function renderAuth() {
   if (sendResetBtn) sendResetBtn.onclick = sendResetLink;
   const resetSubmit = document.getElementById("reset-submit");
   if (resetSubmit) resetSubmit.onclick = resetPassword;
+  const backToLogin = document.getElementById("back-to-login");
+  if (backToLogin) {
+    backToLogin.onclick = () => {
+      state.auth.mode = "login";
+      state.error = null;
+      render();
+    };
+  }
   if (document.getElementById("theme-btn")) {
     document.getElementById("theme-btn").onclick = toggleTheme;
   }
@@ -674,7 +719,7 @@ function renderApp() {
     <div class="shell">
       <header class="app-header">
         <div class="brand-block">
-          <h1>mySimpleNutritionTracker</h1>
+          <h1>Simple Nutrition Tracker</h1>
           <p>Hi ${displayName}</p>
         </div>
         <div class="tabs desktop-tabs">

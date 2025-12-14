@@ -497,12 +497,13 @@ function renderAuth() {
                   <p class="muted">Forgot your password? Send a reset link, then paste the token and set a new password.</p>
                   <label>Email <input type="email" id="reset-email" value="${email}" /></label>
                   <div class="inline-actions">
-                    <button id="send-reset" class="ghost" type="button">Send reset link</button>
+                    <button id="send-reset" class="ghost" type="button" ${state.status === "loading" ? "disabled" : ""}>Send reset link</button>
                   </div>
                   <label>Reset token <input type="text" id="reset-token" value="${token}" /></label>
                   <label>New password <input type="password" id="reset-password" value="${password}" /></label>
                   <label>Confirm new password <input type="password" id="reset-confirm" value="${confirmPassword}" /></label>
-                  <button id="reset-submit" class="primary" type="button">Reset password</button>
+                  <button id="reset-submit" class="primary" type="button" ${state.status === "loading" ? "disabled" : ""}>Reset password</button>
+                  <div class="status">${state.status === "loading" ? "Sending reset..." : ""} ${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
                 </div>
               `
                 : `
@@ -1106,6 +1107,12 @@ async function submitAuth() {
 }
 
 async function sendResetLink() {
+  if (!state.auth.email) {
+    state.error = "Enter your email to send a reset link.";
+    render();
+    return;
+  }
+  state.status = "loading";
   try {
     const res = await fetch(`${AUTH_BASE}/auth/forgot`, {
       method: "POST",
@@ -1113,9 +1120,12 @@ async function sendResetLink() {
       body: JSON.stringify({ email: state.auth.email }),
     });
     if (!res.ok) throw new Error("Unable to send reset link");
-    showToast("Reset link sent (check email/logs)");
+    showToast("Reset link sent");
+    state.error = null;
   } catch (err) {
     state.error = err.message;
+  } finally {
+    state.status = "idle";
     render();
   }
 }

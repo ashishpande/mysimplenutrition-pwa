@@ -33,12 +33,15 @@ const state = {
     heightInches: "",
     weightValue: "",
     weightUnit: "kg",
+    showOptionalMetrics: false,
+    unitsDefaulted: false,
     token: "",
     accessToken: null,
     user: null,
     mfaRequired: false,
     deviceToken: storedDeviceToken,
     rememberDevice: true,
+    status: "idle",
   },
   tab: "today",
   profileForm: {
@@ -92,6 +95,21 @@ function showToast(message, type = "success") {
     state.toast = null;
     render();
   }, 3000);
+}
+
+function isLikelyUsUser() {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  const lang = (navigator.language || "").toLowerCase();
+  return tz.startsWith("America/") || lang === "en-us";
+}
+
+function maybeDefaultRegisterUnits() {
+  if (state.auth.unitsDefaulted || state.auth.mode !== "register") return;
+  if (isLikelyUsUser()) {
+    state.auth.heightUnit = "ftin";
+    state.auth.weightUnit = "lb";
+  }
+  state.auth.unitsDefaulted = true;
 }
 
 function dismissTutorial() {
@@ -464,13 +482,26 @@ function renderAuth() {
     weightUnit,
     weightValue,
   } = state.auth;
+  maybeDefaultRegisterUnits();
+  const passwordTooShort = mode === "register" && password && password.length < 8;
+  const confirmMismatch = mode === "register" && confirmPassword && confirmPassword !== password;
+  const optionalActive = mode === "register" && (heightFeet || heightInches || heightValue || weightValue);
+  let heightInlineError = "";
+  let weightInlineError = "";
+  if (mode === "register" && optionalActive) {
+    if (heightUnit === "ftin" && !heightFeet) heightInlineError = "Enter feet (inches optional).";
+    if (heightUnit === "cm" && !heightValue) heightInlineError = "Enter height in cm.";
+    if (weightValue && !weightUnit) weightInlineError = "Choose a weight unit.";
+  }
+  const title = mode === "register" ? "Create your account" : "Welcome back";
+  const subtitle = mode === "register" ? "Start logging meals in seconds." : "Log in to continue.";
   const themeIcon = state.theme === "dark" ? "🌙" : state.theme === "light" ? "☀️" : "🌓";
   appEl.innerHTML = `
     <div class="shell narrow">
       <header class="auth-header">
         <div class="brand-block">
           <h1>Simple Nutrition Tracker</h1>
-          <p>Sign in to log meals and see reports.</p>
+          <p>${mode === "register" ? "Create your account to start logging meals." : "Sign in to log meals and see reports."}</p>
         </div>
         <button id="theme-btn" class="ghost theme-icon" title="Toggle theme">${themeIcon}</button>
       </header>
@@ -515,13 +546,17 @@ function renderAuth() {
               `
                 : `
                 <div class="form">
-                  <label>Email <input type="email" id="email" value="${email}" placeholder="you@example.com" /></label>
+                  <h2 class="auth-title">${title}</h2>
+                  <p class="auth-subtitle">${subtitle}</p>
+                  <label>Email <input type="email" id="email" value="${email}" placeholder="you@example.com" inputmode="email" autocomplete="email" /></label>
                   <label class="password-field">
                     <span>Password</span>
                     <div class="password-input">
-                      <input type="password" id="password" value="${password}" />
+                      <input type="password" id="password" value="${password}" autocomplete="${mode === "login" ? "current-password" : "new-password"}" />
                       <button class="icon-button" type="button" data-toggle-password="password" aria-label="Toggle password visibility">👁️</button>
                     </div>
+                    <div class="helper">At least 8 characters.</div>
+                    ${passwordTooShort ? `<div class="field-error">Password must be at least 8 characters.</div>` : ""}
                   </label>
                   ${
                     mode === "login"
@@ -534,35 +569,59 @@ function renderAuth() {
                           <label class="password-field">
                             <span>Confirm password</span>
                             <div class="password-input">
-                              <input type="password" id="confirm-password" value="${confirmPassword}" />
+                              <input type="password" id="confirm-password" value="${confirmPassword}" autocomplete="new-password" />
                               <button class="icon-button" type="button" data-toggle-password="confirm-password" aria-label="Toggle confirm password visibility">👁️</button>
                             </div>
+                            ${confirmMismatch ? `<div class="field-error">Passwords do not match.</div>` : ""}
                           </label>
-                          <label>First name <input type="text" id="first-name" value="${firstName}" /></label>
-                          <label>Last name <input type="text" id="last-name" value="${lastName}" /></label>
-                          <div class="two-col">
-                            <label>Height unit
-                              <select id="height-unit">
-                                <option value="cm" ${heightUnit === "cm" ? "selected" : ""}>cm</option>
-                                <option value="in" ${heightUnit === "in" ? "selected" : ""}>inches</option>
-                                <option value="ftin" ${heightUnit === "ftin" ? "selected" : ""}>feet + inches</option>
-                              </select>
-                            </label>
+                          <label>First name <input type="text" id="first-name" value="${firstName}" autocomplete="given-name" placeholder="(optional)" /></label>
+                          <label>Last name <input type="text" id="last-name" value="${lastName}" autocomplete="family-name" placeholder="(optional)" /></label>
+                          <div class="optional-block">
+                            <button class="link-button optional-toggle" id="toggle-optional" type="button">
+                              ${state.auth.showOptionalMetrics ? "Hide optional height & weight" : "Optional: Add height & weight (for personalization)"}
+                            </button>
                             ${
-                              heightUnit === "ftin"
+                              state.auth.showOptionalMetrics
                                 ? `
-                                  <label>Feet <input type="number" step="1" id="height-feet" value="${heightFeet}" /></label>
-                                  <label>Inches <input type="number" step="0.1" id="height-inches" value="${heightInches}" /></label>
+                                  <div class="optional-fields">
+                                    <div class="two-col">
+                                      <label>Height unit
+                                        <select id="height-unit">
+                                          <option value="cm" ${heightUnit === "cm" ? "selected" : ""}>cm</option>
+                                          <option value="in" ${heightUnit === "in" ? "selected" : ""}>inches</option>
+                                          <option value="ftin" ${heightUnit === "ftin" ? "selected" : ""}>feet + inches</option>
+                                        </select>
+                                      </label>
+                                      ${
+                                        heightUnit === "ftin"
+                                          ? `
+                                            <label>Feet
+                                              <input type="number" step="1" id="height-feet" value="${heightFeet}" />
+                                            </label>
+                                            <label>Inches
+                                              <input type="number" step="0.1" id="height-inches" value="${heightInches}" />
+                                            </label>
+                                          `
+                                          : `<label>Height value
+                                              <input type="number" step="0.1" id="height-value" value="${heightValue}" />
+                                            </label>`
+                                      }
+                                      <label>Weight unit
+                                        <select id="weight-unit">
+                                          <option value="kg" ${weightUnit === "kg" ? "selected" : ""}>kg</option>
+                                          <option value="lb" ${weightUnit === "lb" ? "selected" : ""}>lb</option>
+                                        </select>
+                                      </label>
+                                      <label>Weight value
+                                        <input type="number" step="0.1" id="weight-value" value="${weightValue}" />
+                                      </label>
+                                    </div>
+                                    ${heightInlineError ? `<div class="field-error">${heightInlineError}</div>` : ""}
+                                    ${weightInlineError ? `<div class="field-error">${weightInlineError}</div>` : ""}
+                                  </div>
                                 `
-                                : `<label>Height value <input type="number" step="0.1" id="height-value" value="${heightValue}" /></label>`
+                                : ""
                             }
-                            <label>Weight unit
-                              <select id="weight-unit">
-                                <option value="kg" ${weightUnit === "kg" ? "selected" : ""}>kg</option>
-                                <option value="lb" ${weightUnit === "lb" ? "selected" : ""}>lb</option>
-                              </select>
-                            </label>
-                            <label>Weight value <input type="number" step="0.1" id="weight-value" value="${weightValue}" /></label>
                           </div>
                         `
                       : ""
@@ -587,15 +646,16 @@ function renderAuth() {
                     aria-busy="${state.auth.status === "loading"}"
                   >
                     ${state.auth.status === "loading" ? `<span class="spinner" aria-hidden="true"></span>` : ""}
-                    ${mode === "login" ? (state.auth.status === "loading" ? "Logging in..." : "Log in") : state.auth.status === "loading" ? "Registering..." : "Register"}
+                    ${mode === "login" ? (state.auth.status === "loading" ? "Logging in..." : "Log in") : state.auth.status === "loading" ? "Creating..." : "Create account"}
                   </button>
                   ${
                     mode === "login"
                       ? `
                         <button class="link-button" id="switch-register" type="button">New here? Create an account</button>
                       `
-                      : `<button class="link-button" id="switch-login" type="button">Back to login</button>`
+                      : `<button class="link-button" id="switch-login" type="button">Already have an account? Log in</button>`
                   }
+                  <p class="trust-copy">We only ask for what’s needed to log your food.</p>
                   <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
                 </div>
               `
@@ -663,6 +723,8 @@ function renderAuth() {
   if (switchRegister) {
     switchRegister.onclick = () => {
       state.auth.mode = "register";
+      maybeDefaultRegisterUnits();
+       state.auth.showOptionalMetrics = false;
       state.error = null;
       render();
     };
@@ -672,6 +734,8 @@ function renderAuth() {
     switchLogin.onclick = () => {
       state.auth.mode = "login";
       state.error = null;
+      state.auth.unitsDefaulted = false;
+      state.auth.showOptionalMetrics = false;
       render();
     };
   }
@@ -695,6 +759,14 @@ function renderAuth() {
   if (sendResetBtn) sendResetBtn.onclick = sendResetLink;
   const resetSubmit = document.getElementById("reset-submit");
   if (resetSubmit) resetSubmit.onclick = resetPassword;
+  const toggleOptional = document.getElementById("toggle-optional");
+  if (toggleOptional) {
+    toggleOptional.onclick = () => {
+      state.auth.showOptionalMetrics = !state.auth.showOptionalMetrics;
+      state.error = null;
+      render();
+    };
+  }
   const backToLogin = document.getElementById("back-to-login");
   if (backToLogin) {
     backToLogin.onclick = () => {
@@ -1099,28 +1171,79 @@ async function submitAuth() {
     await resetPassword();
     return;
   }
+  if (!email || !password) {
+    state.error = "Email and password are required.";
+    render();
+    return;
+  }
+  if (mode === "register" && password.length < 8) {
+    state.error = "Password must be at least 8 characters.";
+    render();
+    return;
+  }
   if (mode === "register" && password !== confirmPassword) {
     state.error = "Passwords do not match.";
     render();
     return;
   }
+  const optionalActive =
+    mode === "register" &&
+    (state.auth.heightFeet || state.auth.heightInches || state.auth.heightValue || state.auth.weightValue);
+  if (mode === "register" && optionalActive) {
+    if (state.auth.heightUnit === "ftin" && !state.auth.heightFeet) {
+      state.error = "Enter feet for your height (inches optional).";
+      render();
+      return;
+    }
+    if (state.auth.heightUnit === "cm" && !state.auth.heightValue) {
+      state.error = "Enter height in cm.";
+      render();
+      return;
+    }
+    if (state.auth.weightValue && !state.auth.weightUnit) {
+      state.error = "Choose a weight unit.";
+      render();
+      return;
+    }
+  }
+  const trimmedFirst = firstName?.trim() || "";
+  const trimmedLast = lastName?.trim() || "";
+  const cleanedHeightFeet = state.auth.heightFeet || undefined;
+  const cleanedHeightInches =
+    state.auth.heightUnit === "ftin" ? (state.auth.heightInches !== "" ? state.auth.heightInches : "0") : undefined;
+  const cleanedHeightValue = state.auth.heightUnit !== "ftin" ? state.auth.heightValue || undefined : undefined;
+  const cleanedWeightValue = state.auth.weightValue || undefined;
+  const cleanedWeightUnit = cleanedWeightValue ? state.auth.weightUnit || "lb" : undefined;
+  const heightUnit = optionalActive ? state.auth.heightUnit : undefined;
+  const weightUnit = optionalActive ? cleanedWeightUnit : undefined;
+  const heightValue = optionalActive ? cleanedHeightValue : undefined;
+  const heightFeet = optionalActive ? cleanedHeightFeet : undefined;
+  const heightInches = optionalActive ? cleanedHeightInches : undefined;
+  const weightValue = optionalActive ? cleanedWeightValue : undefined;
   state.auth.status = "loading";
   state.error = null;
   try {
+    const body = {
+      email,
+      password,
+      token: mfaRequired ? token : undefined,
+      deviceToken: deviceToken || undefined,
+      rememberDevice: rememberDevice && mfaRequired,
+    };
+    if (mode === "register") {
+      body.firstName = trimmedFirst || undefined;
+      body.lastName = trimmedLast || undefined;
+      body.heightUnit = heightUnit;
+      body.weightUnit = weightUnit;
+      body.heightValue = heightValue;
+      body.heightFeet = heightFeet;
+      body.heightInches = heightInches;
+      body.weightValue = weightValue;
+    }
     const res = await fetch(`${AUTH_BASE}/auth/${mode === "login" ? "login" : "register"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        password,
-        firstName: mode === "register" ? firstName : undefined,
-        lastName: mode === "register" ? lastName : undefined,
-        heightCm: mode === "register" ? state.auth.heightCm : undefined,
-        weightKg: mode === "register" ? state.auth.weightKg : undefined,
-        token: mfaRequired ? token : undefined,
-        deviceToken: deviceToken || undefined,
-        rememberDevice: rememberDevice && mfaRequired,
-      }),
+      body: JSON.stringify(body),
     });
     const data = await parseJsonSafe(res);
     if (data?.mfaRequired) {

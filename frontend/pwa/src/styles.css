@@ -349,6 +349,12 @@ body.theme-dark .primary,
   margin-top: 4px;
 }
 
+.trust-copy {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #475569;
+}
+
 .inline-link {
   display: inline-block;
   padding: 2px 0 4px;
@@ -536,9 +542,20 @@ button.ghost .spinner {
   font-size: 12px;
 }
 
+.auth-title {
+  margin: 4px 0 4px;
+  font-size: 22px;
+}
+
+.auth-subtitle {
+  margin: 0 0 14px;
+  color: #475569;
+  font-size: 14px;
+}
+
 .form label {
   display: block;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   color: #0f172a;
   font-weight: 600;
 }
@@ -549,13 +566,40 @@ button.ghost .spinner {
 
 .form input {
   width: 100%;
-  margin-top: 6px;
+  margin-top: 4px;
   padding: 12px;
   border: 1px solid #cbd5e1;
   border-radius: 10px;
   font-size: 14px;
   background: #f8fbff;
   color: #0b1224;
+}
+
+.helper {
+  color: #475569;
+  font-size: 12.5px;
+  margin-top: 4px;
+}
+
+.field-error {
+  color: #b91c1c;
+  font-size: 12.5px;
+  margin-top: 4px;
+}
+
+.form select {
+  width: 100%;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 14px;
+  background: #f8fbff;
+  color: #0b1224;
+}
+
+.two-col label {
+  margin-bottom: 6px;
 }
 
 .days {
@@ -601,8 +645,28 @@ button.ghost .spinner {
 
 .two-col {
   display: grid;
-  gap: 12px;
+  gap: 10px 14px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.optional-block {
+  margin: 6px 0 10px;
+}
+
+.optional-toggle {
+  padding: 0;
+  text-align: left;
+  color: #0f2c74;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
+.optional-fields {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #f8fbff;
 }
 
 .actions {

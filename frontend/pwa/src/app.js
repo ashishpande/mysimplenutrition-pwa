@@ -1,69 +1,5 @@
-// API base can be overridden by window.API_BASE; defaults to localhost API in dev (localhost or 127.0.0.1).
-const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-const API_BASE = window.API_BASE || (isLocalhost ? "http://localhost:4000/api" : "/api");
-const AUTH_BASE = API_BASE.replace(/\/api$/, "");
-
-const storedDeviceToken = localStorage.getItem("mfaDeviceToken") || "";
-const storedTheme = localStorage.getItem("appTheme") || "auto";
-const PIE_COLORS = ["#2563eb", "#0ea5e9", "#22c55e", "#f59e0b", "#a855f7", "#f97316"];
-
-const state = {
-  listening: false,
-  status: "idle",
-  text: "",
-  result: null,
-  editingItem: null, // { mealId, itemId, values }
-  today: null, // { day, meals }
-  error: null,
-  updateAvailable: false,
-  theme: storedTheme, // auto | light | dark
-  toast: null,
-  showTutorial: !localStorage.getItem("tutorialSeen"),
-  miniBarKeys: ["calories", "protein_g", "carbs_g", "fat_g", "sugars_g"],
-  auth: {
-    mode: "login", // login | register | reset
-    email: "",
-    password: "",
-    confirmPassword: "",
-    firstName: "",
-    lastName: "",
-    heightValue: "",
-    heightUnit: "cm",
-    heightFeet: "",
-    heightInches: "",
-    weightValue: "",
-    weightUnit: "kg",
-    showOptionalMetrics: false,
-    unitsDefaulted: false,
-    token: "",
-    accessToken: null,
-    user: null,
-    mfaRequired: false,
-    deviceToken: storedDeviceToken,
-    rememberDevice: true,
-    status: "idle",
-  },
-  tab: "today",
-  profileForm: {
-    firstName: "",
-    lastName: "",
-    heightUnit: "cm",
-    heightValue: "",
-    heightFeet: "",
-    heightInches: "",
-    weightUnit: "kg",
-    weightValue: "",
-  },
-  mfa: {
-    otpauthUrl: "",
-    base32: "",
-    token: "",
-  },
-  days: [],
-  expandedDays: new Set(),
-  loadingToday: false,
-  loadingDays: false,
-};
+import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits } from "./state.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi } from "./api.js";
 
 const appEl = document.getElementById("app");
 
@@ -95,21 +31,6 @@ function showToast(message, type = "success") {
     state.toast = null;
     render();
   }, 3000);
-}
-
-function isLikelyUsUser() {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-  const lang = (navigator.language || "").toLowerCase();
-  return tz.startsWith("America/") || lang === "en-us";
-}
-
-function maybeDefaultRegisterUnits() {
-  if (state.auth.unitsDefaulted || state.auth.mode !== "register") return;
-  if (isLikelyUsUser()) {
-    state.auth.heightUnit = "ftin";
-    state.auth.weightUnit = "lb";
-  }
-  state.auth.unitsDefaulted = true;
 }
 
 function dismissTutorial() {

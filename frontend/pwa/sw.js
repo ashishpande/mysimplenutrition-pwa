@@ -1,5 +1,5 @@
-const CACHE_NAME = "nutrition-pwa-v6";
-const ASSETS = ["/", "/src/styles.css", "/src/app.js", "/manifest.json"];
+const CACHE_NAME = "nutrition-pwa-v7";
+const ASSETS = ["/", "/src/styles.css", "/src/app.js", "/src/state.js", "/src/api.js", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();

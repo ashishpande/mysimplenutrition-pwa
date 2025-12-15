@@ -55,3 +55,12 @@ export function fetchTodayApi(token, tzOffsetMinutes, dateStr, bust) {
     cache: "no-store",
   });
 }
+
+export function deleteMeal(mealId, token, tzOffsetMinutes) {
+  return fetch(`${API_BASE}/meals/${mealId}?tzOffsetMinutes=${tzOffsetMinutes}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}

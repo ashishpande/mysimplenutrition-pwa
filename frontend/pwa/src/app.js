@@ -1,5 +1,5 @@
 import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits } from "./state.js";
-import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi } from "./api.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal } from "./api.js";
 
 const appEl = document.getElementById("app");
 
@@ -41,33 +41,27 @@ function dismissTutorial() {
 
 function renderTodaySection(result, today) {
   const mealToShow = result?.meal;
-  const dayTotals = today?.day || result?.day;
-  const formatSource = (src) => {
-    if (!src) return "";
-    if (src.startsWith("llm_groq_")) return `source: Groq (${src.replace("llm_groq_", "")})`;
-    if (src.startsWith("llm_ollama_")) return `source: Ollama (${src.replace("llm_ollama_", "")})`;
-    if (src.includes("llm")) return `source: ${src}`;
-    if (src.includes("history") || src.includes("db")) return "source: database";
-    if (src.includes("catalog")) return "source: catalog";
-    if (src.includes("fallback")) return "source: fallback";
-    return `source: ${src}`;
-  };
+  const dayTotals = null;
+  const formatSource = (src) => (src ? `source: ${src}` : "");
   const mealSection = mealToShow
     ? `
       <div class="meal meal-result">
         <div class="tag">${mealToShow?.mealType || "unspecified"}</div>
-        <div><strong>Text:</strong> ${mealToShow?.text || "Logged meal"}</div>
+        <div class="meal-text-line">
+          <strong>Text:</strong> ${mealToShow?.text || "Logged meal"}
+          <button class="ghost small inline-edit" data-fix-text="${mealToShow?.text || ""}" data-fix-meal="${mealToShow?.id || ""}">✏️ Fix</button>
+        </div>
         <ul class="meal-items">
           ${(mealToShow?.items || [])
             .map(
               (item) => `
             <li>
               <div class="item-title">${item.name}</div>
-              <div class="item-meta">${item.quantity} ${item.unit} (${Math.round(item.grams)}g) — ${formatSource(item.source)}</div>
+              <div class="item-meta">${item.quantity} ${item.unit} (${Math.round(item.grams)}g)</div>
               ${
                 state.editingItem?.itemId === item.id
                   ? renderEditForm(mealToShow.id, item)
-                  : `<button class="ghost small" data-edit="${item.id}" data-meal="${mealToShow.id}">Edit</button>`
+                  : `<button class="ghost small" data-edit="${item.id}" data-meal="${mealToShow.id}">✏️ Edit meal</button>`
               }
               <div class="macro">
                 Calories: ${formatNumber(item.nutrients.calories, 0)} kcal |
@@ -87,56 +81,56 @@ function renderTodaySection(result, today) {
             .join("")}
         </ul>
       <div class="total">
-        Total: ${formatNumber(mealToShow?.total?.calories, 0)} kcal — P: ${formatNumber(mealToShow?.total?.protein_g, 1)}g | C: ${formatNumber(mealToShow?.total?.carbs_g, 1)}g | F: ${formatNumber(mealToShow?.total?.fat_g, 1)}g
+        <div class="total-line">
+          <span>Total: ${formatNumber(mealToShow?.total?.calories, 0)} kcal — P: ${formatNumber(mealToShow?.total?.protein_g, 1)}g | C: ${formatNumber(mealToShow?.total?.carbs_g, 1)}g | F: ${formatNumber(mealToShow?.total?.fat_g, 1)}g</span>
+          <span class="estimated" title="Values are estimates based on food data and AI matching.">Estimated</span>
+        </div>
       </div>
     </div>
     `
     : "";
 
-  const daySection = dayTotals
-    ? `
+  return mealSection;
+}
+
+function renderDaySummary(dayTotals, meals = []) {
+  if (!dayTotals) return "";
+  const mealsList =
+    meals?.length
+      ? `<details class="details-card">
+            <summary>Meals today</summary>
+            <ul class="day-meals-list">
+              ${meals
+                .map((m) => {
+                  const totals = computeTotalsFromItems(m.items || []);
+                  return `
+                    <li class="meal-item">
+                      <div class="meal-header">
+                        <span class="pill">${m.mealType || "meal"}</span>
+                        <span class="meal-time">${new Date(m.consumedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                      </div>
+                      <div class="meal-text">${m.text || "Logged meal"}</div>
+                      <div class="macro small">
+                        ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
+                      </div>
+                    </li>
+                  `;
+                })
+                .join("")}
+            </ul>
+         </details>`
+      : "";
+  return `
     <div class="day day-summary">
       <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-      ${renderMiniBars(dayTotals)}
-      ${renderNutrientGrid(dayTotals)}
-    </div>
-    `
-    : "";
-
-  const todayMealsSection =
-    today?.meals?.length
-      ? `<div class="day-meals">
-          <h3>Today’s meals</h3>
-          <ul class="meal-list">
-            ${today.meals
-              .map((m) => {
-                const totals = computeTotalsFromItems(m.items || []);
-                return `
-                  <li>
-                    <div class="meal-header">
-                      <span class="pill">${m.mealType || "meal"}</span>
-                      <span class="meal-time">${new Date(m.consumedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
-                    </div>
-                    <div class="meal-text">${m.text || "Logged meal"}</div>
-                    <div class="macro small">
-                      ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
-                    </div>
-                  </li>
-                `;
-              })
-              .join("")}
-          </ul>
-        </div>`
-      : "";
-
-  if (!mealSection && !daySection && !todayMealsSection) return `
-    <div class="empty-state">
-      <div class="empty-icon">🍽️</div>
-      <h3>No meals logged yet</h3>
-      <p>Use the voice button or text box above to log your first meal!</p>
+      ${renderMiniBars(dayTotals, ["calories", "protein_g", "carbs_g", "fat_g"])}
+      <details class="details-card">
+        <summary>More nutrition details</summary>
+        ${renderNutrientGrid(dayTotals)}
+      </details>
+      ${mealsList}
     </div>
   `;
-  return `${mealSection}${daySection}${todayMealsSection}`;
 }
 
 function renderEditForm(mealId, item) {
@@ -707,7 +701,7 @@ function renderAuth() {
 function renderApp() {
   const { listening, status, text, result, error, tab, days } = state;
   const displayName = [state.auth.user?.firstName, state.auth.user?.lastName].filter(Boolean).join(" ") || state.auth.user?.email || "";
-  const themeLabel = state.theme === "auto" ? "Auto" : state.theme === "dark" ? "Dark" : "Light";
+  const themeIcon = state.theme === "dark" ? "🌙" : state.theme === "light" ? "☀️" : "🌓";
   appEl.innerHTML = `
     <div class="shell">
       <header class="app-header">
@@ -721,21 +715,12 @@ function renderApp() {
           <button class="${tab === "trends" ? "tab active" : "tab"}" data-tab="trends">Trends</button>
           <button class="${tab === "profile" ? "tab active" : "tab"}" data-tab="profile">Profile</button>
         </div>
+        <button id="theme-btn" class="ghost theme-icon" title="Toggle theme">${themeIcon}</button>
         <button class="ghost" id="logout-btn">Logout</button>
       </header>
       ${
         state.toast
           ? `<div class="toast toast-${state.toast.type}">${state.toast.message}</div>`
-          : ""
-      }
-      ${
-        state.showTutorial
-          ? `<div class="tutorial-banner">
-              <div>
-                <strong>👋 Welcome!</strong> Speak or type what you ate (e.g., "I had eggs and toast for breakfast"), then click Submit.
-              </div>
-              <button class="ghost small" id="dismiss-tutorial">Got it</button>
-            </div>`
           : ""
       }
       ${
@@ -747,24 +732,43 @@ function renderApp() {
           : ""
       }
       <main>
-        <div class="theme-toggle">
-          <span>Theme:</span>
-          <button id="theme-btn" class="ghost">${themeLabel}</button>
-        </div>
         ${
           tab === "today"
             ? `
           <section class="card">
-            <div class="input-row">
-              <button id="voice-btn" class="${listening ? "danger" : "primary"}">${listening ? "Stop" : "Speak"}</button>
-              <textarea id="text-input" placeholder="e.g., I ate egg and toast for breakfast">${text}</textarea>
-              <button id="submit-btn" class="primary">Submit</button>
+            <h2>Log a meal</h2>
+            <div class="log-input">
+              <button id="voice-btn" class="icon-btn ghost-btn ${listening ? "active" : ""}" aria-pressed="${listening}" aria-label="Use microphone">🎤</button>
+              <input id="text-input" class="log-field" placeholder="Type or say what you ate… (e.g., “2 eggs and toast”)" value="${text}" />
+              <button id="submit-btn" class="primary log-btn" ${status === "loading" ? "disabled" : ""}>
+                ${status === "loading" ? `<span class="spinner" aria-hidden="true"></span> Logging...` : "Log"}
+              </button>
             </div>
-            <div class="status">${status === "loading" ? "Processing<span class='spinner'></span>" : ""} ${error ? `<span class="error">${error}</span>` : ""}</div>
+            ${
+              state.showTutorial
+                ? `<div class="inline-tip">
+                    <span>💡 Type or say what you ate, then hit Log.</span>
+                    <button class="link-button inline-link" id="dismiss-tutorial" type="button">Got it</button>
+                  </div>`
+                : ""
+            }
+            <div class="status">${error ? `<span class="error">${error}</span>` : ""}</div>
           </section>
+          ${
+            result
+              ? `<section class="card">
+                  <h2>We heard</h2>
+                  ${renderTodaySection(result, state.today)}
+                </section>`
+              : ""
+          }`
+            : ""
+        }
+        ${
+          tab === "today" && state.today?.day
+            ? `
           <section class="card">
-            <h2>Meal result</h2>
-            ${renderTodaySection(result, state.today)}
+            ${renderDaySummary(state.today.day, state.today.meals)}
           </section>`
             : ""
         }
@@ -955,6 +959,9 @@ function renderApp() {
   if (tab === "today") {
     document.getElementById("voice-btn").onclick = toggleVoice;
     document.getElementById("submit-btn").onclick = submitText;
+    if (document.getElementById("theme-btn")) {
+      document.getElementById("theme-btn").onclick = toggleTheme;
+    }
     if (!state.today) {
       fetchToday();
     }
@@ -972,6 +979,44 @@ function renderApp() {
     document.querySelectorAll("[data-edit]").forEach((btn) => {
       const mealId = btn.dataset.meal || result?.meal?.id;
       btn.onclick = () => startEditItem(btn.dataset.edit, mealId);
+    });
+    document.querySelectorAll(".inline-edit").forEach((btn) => {
+      btn.onclick = async () => {
+        const fixText = btn.dataset.fixText || "";
+        const mealId = btn.dataset.fixMeal || "";
+        const tzOffsetMinutes = new Date().getTimezoneOffset();
+        state.error = null;
+        state.status = "loading";
+        render();
+        if (mealId) {
+          try {
+            const res = await deleteMeal(mealId, state.auth.accessToken, tzOffsetMinutes);
+            if (!res.ok) {
+              throw new Error("delete_failed");
+            }
+            // Remove the deleted meal from local state to avoid double counting.
+            if (state.today?.meals?.length) {
+              state.today.meals = state.today.meals.filter((m) => m.id !== mealId);
+            }
+            state.result = null;
+            // Refresh day totals/history to reflect deletion.
+            fetchToday();
+            fetchDays();
+          } catch (err) {
+            // Allow user to proceed even if delete failed; surface error but keep text editable.
+            state.error = "Could not remove the previous meal. You can still edit and log again.";
+          }
+        }
+        state.text = fixText;
+        state.status = "idle";
+        render();
+        const input = document.getElementById("text-input");
+        if (input) {
+          input.focus();
+          input.selectionStart = input.selectionEnd = input.value.length;
+        }
+        // Wait for user to adjust the text; do not auto-submit.
+      };
     });
     document.querySelectorAll(".edit-block input[data-field]").forEach((input) => {
       input.oninput = (e) => updateEditingField(e.target.dataset.field, e.target.value);
@@ -1281,6 +1326,9 @@ function initSpeech() {
     state.text = transcript;
     state.listening = false;
     render();
+    if (state.text.trim()) {
+      submitText();
+    }
   };
   rec.onerror = (event) => {
     state.error = event.error || "Voice error";

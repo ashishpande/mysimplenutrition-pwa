@@ -1055,6 +1055,23 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
   res.json({ meal: createdMeal, day: { userId, date: resolvedDate, ...dayTotals } });
 });
 
+// Delete a meal and recompute day totals
+app.delete("/api/meals/:mealId", authMiddleware, async (req, res) => {
+  const userId = req.user.userId;
+  const mealId = req.params.mealId;
+  const tzOffsetMinutes = Number(req.query.tzOffsetMinutes || 0);
+  if (!mealId) return res.status(400).json({ error: "meal_id_required" });
+  const meal = await prisma.meal.findUnique({ where: { id: mealId }, include: { items: true } });
+  if (!meal || meal.userId !== userId) return res.status(404).json({ error: "not_found" });
+  const localDate = new Date(meal.consumedAt.getTime() - tzOffsetMinutes * 60000).toISOString().slice(0, 10);
+  await prisma.$transaction([
+    prisma.mealItem.deleteMany({ where: { mealId } }),
+    prisma.meal.delete({ where: { id: mealId } }),
+  ]);
+  const dayTotals = await recomputeDayTotals(userId, localDate, tzOffsetMinutes);
+  res.json({ ok: true, day: { userId, date: localDate, ...dayTotals } });
+});
+
 app.get("/api/daily", authMiddleware, (req, res) => {
   const userId = req.user.userId;
   const date = req.query.date || new Date().toISOString().slice(0, 10);

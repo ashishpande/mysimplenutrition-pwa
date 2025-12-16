@@ -48,8 +48,23 @@ function renderTodaySection(result, today) {
       <div class="meal meal-result">
         <div class="tag">${mealToShow?.mealType || "unspecified"}</div>
         <div class="meal-text-line">
-          <strong>Text:</strong> ${mealToShow?.text || "Logged meal"}
-          <button class="ghost small inline-edit" data-fix-text="${mealToShow?.text || ""}" data-fix-meal="${mealToShow?.id || ""}">✏️ Fix</button>
+          ${
+            state.fix.active && state.fix.mealId === mealToShow?.id
+              ? `
+                <label class="fix-inline">
+                  <span>You said:</span>
+                  <input id="fixText" type="text" value="${state.fix.text || ""}" />
+                </label>
+                <div class="fix-actions">
+                  <button id="fixUpdateBtn" class="primary small">Update</button>
+                  <button id="fixCancelBtn" class="ghost small">Cancel</button>
+                </div>
+              `
+              : `
+                <strong>You said:</strong> “${mealToShow?.text || "Logged meal"}”
+                <button class="ghost small inline-edit" data-fix-text="${mealToShow?.text || ""}" data-fix-meal="${mealToShow?.id || ""}">✏️ Fix</button>
+              `
+          }
         </div>
         <ul class="meal-items">
           ${(mealToShow?.items || [])
@@ -58,23 +73,29 @@ function renderTodaySection(result, today) {
             <li>
               <div class="item-title">${item.name}</div>
               <div class="item-meta">${item.quantity} ${item.unit} (${Math.round(item.grams)}g)</div>
-              ${
-                state.editingItem?.itemId === item.id
-                  ? renderEditForm(mealToShow.id, item)
-                  : `<button class="ghost small" data-edit="${item.id}" data-meal="${mealToShow.id}">✏️ Edit meal</button>`
-              }
+              ${state.editingItem?.itemId === item.id ? renderEditForm(mealToShow.id, item) : ""}
               <div class="macro">
                 Calories: ${formatNumber(item.nutrients.calories, 0)} kcal |
                 Protein: ${formatNumber(item.nutrients.protein_g, 1)}g |
                 Carbs: ${formatNumber(item.nutrients.carbs_g, 1)}g |
-                Fiber: ${formatNumber(item.nutrients.fiber_g, 1)}g |
-                Sugar: ${formatNumber(item.nutrients.sugars_g, 1)}g |
-                Fat: ${formatNumber(item.nutrients.fat_g, 1)}g |
-                Sat: ${formatNumber(item.nutrients.saturated_fat_g, 1)}g |
-                Trans: ${formatNumber(item.nutrients.trans_fat_g, 1)}g |
-                Chol: ${formatNumber(item.nutrients.cholesterol_mg, 0)}mg |
-                Sodium: ${formatNumber(item.nutrients.sodium_mg, 0)}mg
+                Fat: ${formatNumber(item.nutrients.fat_g, 1)}g
               </div>
+              <details class="details-card details-inline">
+                <summary>More nutrition details</summary>
+                <div class="macro small">
+                  Fiber: ${formatNumber(item.nutrients.fiber_g, 1)}g |
+                  Sugar: ${formatNumber(item.nutrients.sugars_g, 1)}g |
+                  Sat: ${formatNumber(item.nutrients.saturated_fat_g, 1)}g |
+                  Trans: ${formatNumber(item.nutrients.trans_fat_g, 1)}g |
+                  Unsat: ${formatNumber(Math.max((item.nutrients.fat_g || 0) - (item.nutrients.saturated_fat_g || 0) - (item.nutrients.trans_fat_g || 0), 0), 1)}g |
+                  Chol: ${formatNumber(item.nutrients.cholesterol_mg, 0)}mg |
+                  Sodium: ${formatNumber(item.nutrients.sodium_mg, 0)}mg |
+                  Vitamin D: ${formatNumber(item.nutrients.vitamin_d_mcg, 1)}mcg |
+                  Calcium: ${formatNumber(item.nutrients.calcium_mg, 0)}mg |
+                  Iron: ${formatNumber(item.nutrients.iron_mg, 1)}mg |
+                  Potassium: ${formatNumber(item.nutrients.potassium_mg, 0)}mg
+                </div>
+              </details>
             </li>
           `
             )
@@ -83,7 +104,12 @@ function renderTodaySection(result, today) {
       <div class="total">
         <div class="total-line">
           <span>Total: ${formatNumber(mealToShow?.total?.calories, 0)} kcal — P: ${formatNumber(mealToShow?.total?.protein_g, 1)}g | C: ${formatNumber(mealToShow?.total?.carbs_g, 1)}g | F: ${formatNumber(mealToShow?.total?.fat_g, 1)}g</span>
-          <span class="estimated" title="Values are estimates based on food data and AI matching.">Estimated</span>
+          ${
+            mealToShow?.adjusted
+              ? `<span class="badge badge-adjusted" title="You adjusted these numbers.">Adjusted</span>`
+              : `<span class="badge badge-estimated" title="Values are estimates based on food data and AI matching.">Estimated</span>`
+          }
+          <button class="ghost small inline-adjust" data-edit="${mealToShow?.items?.[0]?.id || ""}" data-meal="${mealToShow?.id || ""}">Adjust nutrition</button>
         </div>
       </div>
     </div>
@@ -959,6 +985,47 @@ function renderApp() {
   if (tab === "today") {
     document.getElementById("voice-btn").onclick = toggleVoice;
     document.getElementById("submit-btn").onclick = submitText;
+    if (document.getElementById("fixText")) {
+      document.getElementById("fixText").oninput = (e) => (state.fix.text = e.target.value);
+    }
+    if (document.getElementById("fixUpdateBtn")) {
+      document.getElementById("fixUpdateBtn").onclick = async () => {
+        const mealId = state.fix.mealId;
+        const fixText = state.fix.text || "";
+        const tzOffsetMinutes = new Date().getTimezoneOffset();
+        state.error = null;
+        state.status = "loading";
+        render();
+        if (mealId) {
+          try {
+            const res = await deleteMeal(mealId, state.auth.accessToken, tzOffsetMinutes);
+            if (!res.ok) throw new Error("delete_failed");
+            if (state.today?.meals?.length) {
+              state.today.meals = state.today.meals.filter((m) => m.id !== mealId);
+            }
+            state.result = null;
+            await fetchToday();
+            await fetchDays();
+          } catch (err) {
+            state.error = "Could not remove the previous meal. You can still log the update.";
+          }
+        }
+        state.text = fixText;
+        state.fix = { active: false, mealId: null, text: "" };
+        render();
+        await submitText();
+        state.status = "idle";
+        render();
+        await fetchToday();
+        await fetchDays();
+      };
+    }
+    if (document.getElementById("fixCancelBtn")) {
+      document.getElementById("fixCancelBtn").onclick = () => {
+        state.fix = { active: false, mealId: null, text: "" };
+        render();
+      };
+    }
     if (document.getElementById("theme-btn")) {
       document.getElementById("theme-btn").onclick = toggleTheme;
     }
@@ -980,42 +1047,19 @@ function renderApp() {
       const mealId = btn.dataset.meal || result?.meal?.id;
       btn.onclick = () => startEditItem(btn.dataset.edit, mealId);
     });
+    document.querySelectorAll(".inline-adjust").forEach((btn) => {
+      const mealId = btn.dataset.meal || result?.meal?.id;
+      btn.onclick = () => startEditItem(btn.dataset.edit, mealId);
+    });
     document.querySelectorAll(".inline-edit").forEach((btn) => {
       btn.onclick = async () => {
         const fixText = btn.dataset.fixText || "";
         const mealId = btn.dataset.fixMeal || "";
-        const tzOffsetMinutes = new Date().getTimezoneOffset();
-        state.error = null;
-        state.status = "loading";
+        state.fix = { active: true, mealId, text: fixText };
+        state.result = state.result && state.result.meal?.id === mealId ? state.result : state.result;
         render();
-        if (mealId) {
-          try {
-            const res = await deleteMeal(mealId, state.auth.accessToken, tzOffsetMinutes);
-            if (!res.ok) {
-              throw new Error("delete_failed");
-            }
-            // Remove the deleted meal from local state to avoid double counting.
-            if (state.today?.meals?.length) {
-              state.today.meals = state.today.meals.filter((m) => m.id !== mealId);
-            }
-            state.result = null;
-            // Refresh day totals/history to reflect deletion.
-            fetchToday();
-            fetchDays();
-          } catch (err) {
-            // Allow user to proceed even if delete failed; surface error but keep text editable.
-            state.error = "Could not remove the previous meal. You can still edit and log again.";
-          }
-        }
-        state.text = fixText;
-        state.status = "idle";
-        render();
-        const input = document.getElementById("text-input");
-        if (input) {
-          input.focus();
-          input.selectionStart = input.selectionEnd = input.value.length;
-        }
-        // Wait for user to adjust the text; do not auto-submit.
+        const input = document.getElementById("fixText");
+        if (input) input.focus();
       };
     });
     document.querySelectorAll(".edit-block input[data-field]").forEach((input) => {
@@ -1685,7 +1729,9 @@ async function saveItemEdits(mealId, itemId) {
       }
       // Keep today.meals in sync with the totals the backend returned.
       state.today = state.today || { meals: [] };
-      state.today.meals = (state.today.meals || []).map((m) => (m.id === mealId ? { ...m, total: mealTotal, items: itemsWithNutrients } : m));
+      state.today.meals = (state.today.meals || []).map((m) =>
+        m.id === mealId ? { ...m, total: mealTotal, items: itemsWithNutrients, adjusted: true } : m
+      );
     }
     if (data?.dayTotals) {
       state.today = state.today || { day: {}, meals: [] };
@@ -1693,6 +1739,9 @@ async function saveItemEdits(mealId, itemId) {
       if (state.result) {
         state.result.day = { ...state.result?.day, ...data.dayTotals };
       }
+    }
+    if (state.result?.meal && state.result.meal.id === mealId) {
+      state.result.meal.adjusted = true;
     }
   } catch (err) {
     state.error = err.message;

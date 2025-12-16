@@ -12,6 +12,7 @@ export const state = {
   status: "idle",
   text: "",
   result: null,
+  fix: { active: false, mealId: null, text: "" },
   editingItem: null, // { mealId, itemId, values }
   today: null, // { day, meals }
   error: null,

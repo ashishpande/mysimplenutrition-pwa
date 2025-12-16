@@ -139,6 +139,22 @@ function renderDaySummary(dayTotals, meals = []) {
                       <div class="macro small">
                         ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
                       </div>
+                      <details class="details-card details-inline">
+                        <summary>More nutrition details</summary>
+                        <div class="macro small">
+                          Fiber: ${formatNumber(totals.fiber_g, 1)}g |
+                          Sugar: ${formatNumber(totals.sugars_g, 1)}g |
+                          Sat: ${formatNumber(totals.saturated_fat_g, 1)}g |
+                          Trans: ${formatNumber(totals.trans_fat_g, 1)}g |
+                          Unsat: ${formatNumber(Math.max((totals.fat_g || 0) - (totals.saturated_fat_g || 0) - (totals.trans_fat_g || 0), 0), 1)}g |
+                          Chol: ${formatNumber(totals.cholesterol_mg, 0)}mg |
+                          Sodium: ${formatNumber(totals.sodium_mg, 0)}mg |
+                          Vitamin D: ${formatNumber(totals.vitamin_d_mcg, 1)}mcg |
+                          Calcium: ${formatNumber(totals.calcium_mg, 0)}mg |
+                          Iron: ${formatNumber(totals.iron_mg, 1)}mg |
+                          Potassium: ${formatNumber(totals.potassium_mg, 0)}mg
+                        </div>
+                      </details>
                     </li>
                   `;
                 })
@@ -765,7 +781,7 @@ function renderApp() {
             <h2>Log a meal</h2>
             <div class="log-input">
               <button id="voice-btn" class="icon-btn ghost-btn ${listening ? "active" : ""}" aria-pressed="${listening}" aria-label="Use microphone">🎤</button>
-              <input id="text-input" class="log-field" placeholder="Type or say what you ate… (e.g., “2 eggs and toast”)" value="${text}" />
+              <input id="text-input" class="log-field" placeholder="Type or say what you ate. We’ll estimate nutrition. (e.g., “2 eggs and toast”)" value="${text}" />
               <button id="submit-btn" class="primary log-btn" ${status === "loading" ? "disabled" : ""}>
                 ${status === "loading" ? `<span class="spinner" aria-hidden="true"></span> Logging...` : "Log"}
               </button>
@@ -1232,6 +1248,7 @@ async function submitAuth() {
   const weightValue = optionalActive ? cleanedWeightValue : undefined;
   state.auth.status = "loading";
   state.error = null;
+  render();
   try {
     const body = {
       email,

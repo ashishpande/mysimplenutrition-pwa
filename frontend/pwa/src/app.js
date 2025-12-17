@@ -1482,6 +1482,11 @@ async function resetPassword() {
 }
 
 let recognition;
+function stopListening() {
+  if (!state.listening) return;
+  state.listening = false;
+  render();
+}
 function initSpeech() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) return null;
@@ -1492,20 +1497,27 @@ function initSpeech() {
   rec.onresult = (event) => {
     const transcript = event.results[0][0].transcript;
     state.text = transcript;
-    state.listening = false;
-    render();
+    stopListening();
     if (state.text.trim()) {
       submitText();
     }
   };
   rec.onerror = (event) => {
     state.error = event.error || "Voice error";
-    state.listening = false;
-    render();
+    stopListening();
+  };
+  rec.onspeechend = () => {
+    stopListening();
+    rec.stop();
+  };
+  rec.onaudioend = () => {
+    stopListening();
+  };
+  rec.onnomatch = () => {
+    stopListening();
   };
   rec.onend = () => {
-    state.listening = false;
-    render();
+    stopListening();
   };
   return rec;
 }
@@ -1521,8 +1533,7 @@ function toggleVoice() {
   }
   if (state.listening) {
     recognition.stop();
-    state.listening = false;
-    render();
+    stopListening();
   } else {
     state.error = null;
     state.listening = true;

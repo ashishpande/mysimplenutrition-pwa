@@ -70,6 +70,7 @@ npx wrangler pages deploy . --project-name nutrition-app
 - **Food Import**: Run `npm run ingest:foods` ONCE after initial deploy, not on every deploy
 - **Secrets**: All via platform env vars, never commit to repo
 - **CORS**: Lock ALLOWED_ORIGINS to your frontend URL only
+- **Cold Starts (low traffic)**: Fly.io auto-stops can add ~10–20s to first login; consider keeping 1 machine warm later.
 
 ## Monitoring
 ```bash

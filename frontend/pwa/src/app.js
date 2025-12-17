@@ -401,15 +401,11 @@ function renderMiniBars(total, keys = []) {
 
 function determineMealType(text) {
   const lower = (text || "").toLowerCase();
-  if (lower.includes("breakfast")) return "breakfast";
-  if (lower.includes("lunch")) return "lunch";
-  if (lower.includes("dinner")) return "dinner";
+  if (lower.includes("breakfast") || lower.includes("morning")) return "breakfast";
+  if (lower.includes("lunch") || lower.includes("noon")) return "lunch";
+  if (lower.includes("dinner") || lower.includes("evening")) return "dinner";
   if (lower.includes("snack")) return "snack";
-
-  const hour = new Date().getHours();
-  if (hour < 11) return "breakfast";
-  if (hour < 17) return "lunch";
-  return "dinner";
+  return "snack";
 }
 
 function cmToFeetInches(cm) {
@@ -1187,6 +1183,7 @@ function renderApp() {
   }
   document.querySelectorAll(".tabs button, .mobile-nav button").forEach((btn) => {
     btn.onclick = () => {
+      stopListening("tab-switch");
       state.tab = btn.dataset.tab;
        // Avoid leaving the log button stuck in a loading state when switching tabs.
       state.status = "idle";
@@ -1234,6 +1231,7 @@ function renderApp() {
   }
   document.querySelectorAll("[data-logout]").forEach((btn) => {
     btn.onclick = () => {
+      stopListening("logout");
       state.auth = {
         mode: "login",
         email: "",
@@ -1482,9 +1480,20 @@ async function resetPassword() {
 }
 
 let recognition;
-function stopListening() {
-  if (!state.listening) return;
+let listeningTimeout;
+function stopListening(reason = "") {
+  if (!state.listening && !recognition) return;
   state.listening = false;
+  if (listeningTimeout) {
+    clearTimeout(listeningTimeout);
+    listeningTimeout = null;
+  }
+  try {
+    recognition?.stop?.();
+  } catch (_err) {}
+  try {
+    recognition?.abort?.();
+  } catch (_err) {}
   render();
 }
 function initSpeech() {
@@ -1492,32 +1501,35 @@ function initSpeech() {
   if (!SpeechRecognition) return null;
   const rec = new SpeechRecognition();
   rec.lang = "en-US";
+  rec.continuous = false;
   rec.interimResults = false;
   rec.maxAlternatives = 1;
   rec.onresult = (event) => {
-    const transcript = event.results[0][0].transcript;
+    const transcript = event.results?.[0]?.[0]?.transcript || "";
     state.text = transcript;
-    stopListening();
+    stopListening("result");
     if (state.text.trim()) {
       submitText();
     }
   };
   rec.onerror = (event) => {
     state.error = event.error || "Voice error";
-    stopListening();
+    stopListening("error");
   };
   rec.onspeechend = () => {
-    stopListening();
-    rec.stop();
+    stopListening("speechend");
+  };
+  rec.onsoundend = () => {
+    stopListening("soundend");
   };
   rec.onaudioend = () => {
-    stopListening();
+    stopListening("audioend");
   };
   rec.onnomatch = () => {
-    stopListening();
+    stopListening("nomatch");
   };
   rec.onend = () => {
-    stopListening();
+    stopListening("end");
   };
   return rec;
 }
@@ -1532,12 +1544,22 @@ function toggleVoice() {
     return;
   }
   if (state.listening) {
-    recognition.stop();
-    stopListening();
+    stopListening("toggle-off");
+    return;
   } else {
     state.error = null;
     state.listening = true;
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (err) {
+      recognition = initSpeech();
+      recognition?.start?.();
+    }
+    listeningTimeout = setTimeout(() => {
+      if (state.listening) {
+        stopListening("timeout");
+      }
+    }, 10000);
     render();
   }
 }
@@ -1905,6 +1927,18 @@ if (window.matchMedia) {
     }
   });
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopListening("visibilitychange-hidden");
+});
+
+window.addEventListener("pagehide", () => {
+  stopListening("pagehide");
+});
+
+window.addEventListener("blur", () => {
+  stopListening("blur");
+});
 
 async function parseJsonSafe(res) {
   try {

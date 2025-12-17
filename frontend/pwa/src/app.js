@@ -1482,7 +1482,6 @@ async function resetPassword() {
 let recognition;
 let listeningTimeout;
 function stopListening(reason = "") {
-  if (!state.listening && !recognition) return;
   state.listening = false;
   if (listeningTimeout) {
     clearTimeout(listeningTimeout);
@@ -1494,6 +1493,7 @@ function stopListening(reason = "") {
   try {
     recognition?.abort?.();
   } catch (_err) {}
+  recognition = null;
   render();
 }
 function initSpeech() {
@@ -1535,33 +1535,30 @@ function initSpeech() {
 }
 
 function toggleVoice() {
-  if (!recognition) {
-    recognition = initSpeech();
+  if (state.listening) {
+    stopListening("toggle-off");
+    return;
   }
+  state.error = null;
+  recognition = initSpeech();
   if (!recognition) {
     state.error = "Voice recognition not supported in this browser.";
     render();
     return;
   }
-  if (state.listening) {
-    stopListening("toggle-off");
-    return;
-  } else {
-    state.error = null;
-    state.listening = true;
-    try {
-      recognition.start();
-    } catch (err) {
-      recognition = initSpeech();
-      recognition?.start?.();
-    }
-    listeningTimeout = setTimeout(() => {
-      if (state.listening) {
-        stopListening("timeout");
-      }
-    }, 10000);
+  state.listening = true;
+  try {
+    recognition.start();
+  } catch (_err) {
+    stopListening("start-failed");
+    state.error = "Could not start voice input. Try again.";
     render();
+    return;
   }
+  listeningTimeout = setTimeout(() => {
+    if (state.listening) stopListening("timeout");
+  }, 10000);
+  render();
 }
 
 async function submitText() {
@@ -1929,7 +1926,7 @@ if (window.matchMedia) {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) stopListening("visibilitychange-hidden");
+  if (document.hidden) stopListening("hidden");
 });
 
 window.addEventListener("pagehide", () => {

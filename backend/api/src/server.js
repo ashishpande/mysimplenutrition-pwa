@@ -6,6 +6,7 @@ import morgan from "morgan";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import * as chrono from "chrono-node";
 import { fileURLToPath } from "url";
 import { v4 as uuid } from "uuid";
 import jwt from "jsonwebtoken";
@@ -845,6 +846,98 @@ function computeLocalDayWindow(dateStr, tzOffsetMinutes) {
   return { startUtc, endUtc };
 }
 
+function formatLocalYMD(date, tzOffsetMinutes = 0) {
+  const d = new Date(date.getTime() - tzOffsetMinutes * 60000);
+  const y = d.getUTCFullYear();
+  const m = `${d.getUTCMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getUTCDate()}`.padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function detectMealSlot(text) {
+  if (!text) return "snack";
+  const lower = text.toLowerCase();
+  const matches = [
+    { slot: "breakfast", keywords: ["breakfast", "morning"] },
+    { slot: "lunch", keywords: ["lunch", "noon"] },
+    { slot: "dinner", keywords: ["dinner", "evening"] },
+    { slot: "snack", keywords: ["snack"] },
+  ];
+  let first = { slot: "snack", idx: Infinity };
+  for (const group of matches) {
+    for (const kw of group.keywords) {
+      const idx = lower.indexOf(kw);
+      if (idx !== -1 && idx < first.idx) {
+        first = { slot: group.slot, idx };
+      }
+    }
+  }
+  return first.idx === Infinity ? "snack" : first.slot;
+}
+
+function defaultTimeForSlot(slot) {
+  switch (slot) {
+    case "breakfast":
+      return { hours: 8, minutes: 0 };
+    case "lunch":
+      return { hours: 13, minutes: 0 };
+    case "dinner":
+      return { hours: 19, minutes: 0 };
+    case "snack":
+    default:
+      return { hours: 15, minutes: 0 };
+  }
+}
+
+function parseMealText(text, tzOffsetMinutes = 0) {
+  // Represent "now" in the user's local time by shifting with tzOffsetMinutes.
+  const nowLocal = new Date(Date.now() + tzOffsetMinutes * 60000);
+  const slot = detectMealSlot(text);
+  const daysAgoMatch = text.match(/(\d+)\s+days?\s+ago/i);
+  if (daysAgoMatch) {
+    const days = Number(daysAgoMatch[1]);
+    const baseLocal = new Date(nowLocal);
+    baseLocal.setDate(baseLocal.getDate() - (Number.isFinite(days) ? days : 0));
+    const def = defaultTimeForSlot(slot);
+    baseLocal.setHours(def.hours, def.minutes, 0, 0);
+    const cleanedText = text.replace(daysAgoMatch[0], "").replace(/\s+/g, " ").trim();
+    const utcDate = new Date(baseLocal.getTime() - tzOffsetMinutes * 60000);
+    return { foodText: cleanedText || text.trim(), mealSlot: slot, consumedAt: utcDate, clampedFuture: false };
+  }
+  const parsed = chrono.parse(text, nowLocal, { forwardDate: false });
+  let consumedAt = new Date(nowLocal.getTime() - tzOffsetMinutes * 60000);
+  let cleanedText = text;
+  let clampedFuture = false;
+  if (parsed.length) {
+    const first = parsed[0];
+    const startDate = first.start?.date();
+    if (startDate) {
+      const localDate = new Date(startDate);
+      const idx = first.index ?? -1;
+      const len = first.text?.length ?? 0;
+      if (idx !== -1 && len) {
+        cleanedText = (text.slice(0, idx) + text.slice(idx + len))
+          .replace(/\b(yesterday|today|last\s+\w+|on|at)\b/gi, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+      consumedAt = new Date(localDate.getTime() - tzOffsetMinutes * 60000);
+    }
+  }
+  if (parsed.length && parsed[0].start && parsed[0].start.isCertain("day") && !parsed[0].start.isCertain("hour")) {
+    const d = new Date(consumedAt.getTime() + tzOffsetMinutes * 60000);
+    const def = defaultTimeForSlot(slot);
+    d.setHours(def.hours, def.minutes, 0, 0);
+    consumedAt = new Date(d.getTime() - tzOffsetMinutes * 60000);
+  }
+  const now = new Date();
+  if (consumedAt.getTime() > now.getTime()) {
+    clampedFuture = true;
+    consumedAt = now;
+  }
+  return { foodText: cleanedText.trim() || text.trim(), mealSlot: slot, consumedAt, clampedFuture };
+}
+
 async function callOllama(prompt) {
   const OLLAMA_HOST = process.env.OLLAMA_HOST || "http://ollama:11434";
   const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3";
@@ -865,15 +958,18 @@ async function callOllama(prompt) {
 
 // Protected routes below.
 app.post("/api/meals", authMiddleware, async (req, res) => {
-  const { text = "", mealType, consumedAt = new Date().toISOString(), tzOffsetMinutes = 0, clientDateStr } = req.body || {};
+  const { text = "", mealType, consumedAt = null, tzOffsetMinutes = 0, clientDateStr } = req.body || {};
   if (!text.trim()) {
     return res.status(400).json({ error: "text is required" });
   }
+  const parsed = parseMealText(text, tzOffsetMinutes);
   const userId = req.user.userId;
-  const resolvedMealType = mealType && mealType !== "unspecified" ? mealType : inferMealType(text, consumedAt);
+  const resolvedMealType = mealType && mealType !== "unspecified" ? mealType : parsed.mealSlot || inferMealType(text, parsed.consumedAt);
+  const mealConsumedAt = consumedAt ? new Date(consumedAt) : parsed.consumedAt || new Date();
+  const targetDateStr = clientDateStr || formatLocalYMD(mealConsumedAt, tzOffsetMinutes);
 
-  const extracted = await extractFoodsFromLlm(text);
-  const parsedTokens = extracted.length ? extracted : fallbackExtractFoods(text);
+  const extracted = await extractFoodsFromLlm(parsed.foodText);
+  const parsedTokens = extracted.length ? extracted : fallbackExtractFoods(parsed.foodText);
   if (!parsedTokens.length) {
     return res.status(400).json({ error: "Could not identify any foods in that description." });
   }
@@ -918,8 +1014,7 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
   const total = items.reduce((acc, item) => accumulateNutrients(acc, item.nutrients), { ...emptyNutrients });
 
   const mealId = uuid();
-  // Always use client-provided local date
-  const dateStr = clientDateStr || new Date().toISOString().slice(0, 10);
+  const dateStr = targetDateStr || new Date().toISOString().slice(0, 10);
   let createdMeal = null;
 
   // Persist meal, items, and daily totals in DB.
@@ -930,8 +1025,8 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
           id: mealId,
           userId,
           mealType: resolvedMealType,
-          consumedAt: new Date(consumedAt),
-          text,
+          consumedAt: new Date(mealConsumedAt),
+          text: parsed.foodText,
           items: {
             create: items.map((i) => ({
               id: uuid(),
@@ -988,8 +1083,8 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
         id: mealRecord.id,
         userId,
         mealType: resolvedMealType,
-        consumedAt,
-        text,
+        consumedAt: mealConsumedAt,
+        text: parsed.foodText,
         items: mealItems.map((itm) => ({
           id: itm.id,
           foodId: itm.foodId,
@@ -1052,7 +1147,36 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
     dayTotals = { ...emptyNutrients, ...total };
   }
 
-  res.json({ meal: createdMeal, day: { userId, date: resolvedDate, ...dayTotals } });
+  res.json({
+    meal: { ...createdMeal, mealType: resolvedMealType, consumedAt: mealConsumedAt },
+    day: { userId, date: resolvedDate, ...dayTotals },
+    clampedFuture: parsed.clampedFuture || false,
+  });
+});
+
+// Update meal metadata (consumedAt, mealType)
+app.patch("/api/meals/:mealId", authMiddleware, async (req, res) => {
+  const userId = req.user.userId;
+  const mealId = req.params.mealId;
+  const { consumedAt, mealType } = req.body || {};
+  const tzOffsetMinutes = Number(req.body?.tzOffsetMinutes || 0);
+  if (!mealId) return res.status(400).json({ error: "meal_id_required" });
+  const meal = await prisma.meal.findUnique({ where: { id: mealId } });
+  if (!meal || meal.userId !== userId) return res.status(404).json({ error: "not_found" });
+  const newConsumedAt = consumedAt ? new Date(consumedAt) : new Date();
+  const prevDateStr = formatLocalYMD(meal.consumedAt, tzOffsetMinutes);
+  const newDateStr = formatLocalYMD(newConsumedAt, tzOffsetMinutes);
+  const slot = mealType || meal.mealType || "snack";
+  const updated = await prisma.meal.update({
+    where: { id: mealId },
+    data: { consumedAt: newConsumedAt, mealType: slot },
+    include: { items: true },
+  });
+  if (prevDateStr !== newDateStr) {
+    await recomputeDayTotals(userId, prevDateStr, tzOffsetMinutes);
+  }
+  const newDay = await recomputeDayTotals(userId, newDateStr, tzOffsetMinutes);
+  res.json({ ok: true, day: { userId, date: newDateStr, ...newDay }, meal: updated });
 });
 
 // Delete a meal and recompute day totals

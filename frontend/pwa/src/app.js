@@ -1,5 +1,6 @@
 import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits } from "./state.js";
-import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal } from "./api.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta } from "./api.js";
+import { formatWhen, buildConsumedAtFromInputs } from "./time.js";
 
 const appEl = document.getElementById("app");
 
@@ -63,6 +64,48 @@ function renderTodaySection(result, today) {
               : `
                 <strong>You said:</strong> “${mealToShow?.text || "Logged meal"}”
                 <button class="ghost small inline-edit" data-fix-text="${mealToShow?.text || ""}" data-fix-meal="${mealToShow?.id || ""}">✏️ Fix</button>
+              `
+          }
+        </div>
+        <div class="when-line">
+          ${
+            state.fixTime.active && state.fixTime.mealId === mealToShow?.id
+              ? `
+                <div class="fix-inline">
+                  <span>When:</span>
+                  <input type="date" id="fix-date" value="${state.fixTime.date || formatLocalYMD(new Date(mealToShow?.consumedAt || Date.now()))}" />
+                  <input type="time" id="fix-time" value="${
+                    state.fixTime.time ||
+                    `${String(new Date(mealToShow?.consumedAt || Date.now()).getHours()).padStart(2, "0")}:${String(
+                      new Date(mealToShow?.consumedAt || Date.now()).getMinutes()
+                    ).padStart(2, "0")}`
+                  }" />
+                  <select id="fix-slot">
+                    ${["breakfast", "lunch", "dinner", "snack"]
+                      .map(
+                        (s) =>
+                          `<option value="${s}" ${(state.fixTime.slot || mealToShow?.mealType || "snack") === s ? "selected" : ""}>${
+                            s.charAt(0).toUpperCase() + s.slice(1)
+                          }</option>`
+                      )
+                      .join("")}
+                  </select>
+                </div>
+                <div class="fix-actions">
+                  <button id="fix-time-save" class="primary small" ${state.fixTime.status === "saving" ? "disabled" : ""}>
+                    ${state.fixTime.status === "saving" ? `<span class="spinner"></span> Saving...` : "Save"}
+                  </button>
+                  <button id="fix-time-cancel" class="ghost small" ${state.fixTime.status === "saving" ? "disabled" : ""}>Cancel</button>
+                  ${
+                    state.fixTime.status === "success"
+                      ? `<span class="small success-text">Updated your meal.</span>`
+                      : ""
+                  }
+                </div>
+              `
+              : `
+                <strong>When:</strong> ${formatWhen(mealToShow?.consumedAt, mealToShow?.mealType)}
+                <button class="ghost small inline-edit" data-fix-time="${mealToShow?.id || ""}">Fix time</button>
               `
           }
         </div>
@@ -1084,12 +1127,79 @@ function renderApp() {
     document.querySelectorAll("[data-cancel]").forEach((btn) => {
       btn.onclick = () => cancelEdit();
     });
+    document.querySelectorAll("[data-fix-time]").forEach((btn) => {
+      btn.onclick = () => {
+        const mealId = btn.dataset.fixTime;
+          const meal =
+            (state.result?.meal && state.result.meal.id === mealId ? state.result.meal : null) ||
+            (state.today?.meals || []).find((m) => m.id === mealId);
+        const consumedAt = meal?.consumedAt ? new Date(meal.consumedAt) : new Date();
+        state.fixTime = {
+          active: true,
+          mealId,
+          date: formatLocalYMD(consumedAt),
+          time: `${String(consumedAt.getHours()).padStart(2, "0")}:${String(consumedAt.getMinutes()).padStart(2, "0")}`,
+          slot: meal?.mealType || "snack",
+        };
+        render();
+      };
+    });
+    const fixDate = document.getElementById("fix-date");
+    const fixTimeInput = document.getElementById("fix-time");
+    const fixSlot = document.getElementById("fix-slot");
+    if (fixDate) fixDate.oninput = (e) => (state.fixTime.date = e.target.value);
+    if (fixTimeInput) fixTimeInput.oninput = (e) => (state.fixTime.time = e.target.value);
+    if (fixSlot) fixSlot.onchange = (e) => (state.fixTime.slot = e.target.value);
+    if (document.getElementById("fix-time-cancel")) {
+      document.getElementById("fix-time-cancel").onclick = () => {
+        state.fixTime = { active: false, mealId: null, date: "", time: "", slot: "", status: "idle" };
+        render();
+      };
+    }
+    if (document.getElementById("fix-time-save")) {
+      document.getElementById("fix-time-save").onclick = async () => {
+        state.fixTime.status = "saving";
+        render();
+        
+        try {
+          const { mealId, date, time, slot } = state.fixTime;
+          const tzOffsetMinutes = new Date().getTimezoneOffset();
+          const consumedAt = buildConsumedAtFromInputs(date, time, slot || "snack");
+          
+          const res = await patchMealMeta(mealId, {
+            consumedAt,
+            mealType: slot || "snack",
+            tzOffsetMinutes,
+            token: state.auth.accessToken,
+          });
+          
+          if (!res.ok) {
+            const data = await parseJsonSafe(res);
+            throw new Error(data?.error || "Save failed");
+          }
+          
+          state.fixTime.status = "idle";
+          state.fixTime.active = false;
+          showToast("Your changes have been saved");
+          render();
+        } catch (err) {
+          state.fixTime.status = "idle";
+          state.error = "Unable to update time. Please try again.";
+          render();
+        }
+      };
+    }
   }
   document.querySelectorAll(".tabs button, .mobile-nav button").forEach((btn) => {
     btn.onclick = () => {
       state.tab = btn.dataset.tab;
+       // Avoid leaving the log button stuck in a loading state when switching tabs.
+      state.status = "idle";
       if (state.tab === "history" || state.tab === "trends") {
         fetchDays();
+      }
+      if (state.tab === "today") {
+        fetchToday();
       }
       if (state.tab === "profile" && state.auth.user) {
         state.profileForm = buildProfileFormFromUser(state.auth.user);
@@ -1432,10 +1542,6 @@ async function submitText() {
   }
   const mealType = determineMealType(state.text);
   const tzOffsetMinutes = new Date().getTimezoneOffset();
-  const now = new Date();
-  const clientDateStr = formatLocalYMD(now);
-  // Store the actual UTC timestamp; toISOString already converts local time to UTC.
-  const consumedAt = now.toISOString();
   state.status = "loading";
   state.error = null;
   render();
@@ -1446,7 +1552,7 @@ async function submitText() {
         "Content-Type": "application/json",
         Authorization: `Bearer ${state.auth.accessToken}`,
       },
-      body: JSON.stringify({ text: state.text, mealType, tzOffsetMinutes, clientDateStr, consumedAt }),
+      body: JSON.stringify({ text: state.text, mealType, tzOffsetMinutes }),
     });
     const data = await parseJsonSafe(res);
     if (!res.ok) {

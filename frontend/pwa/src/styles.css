@@ -170,8 +170,8 @@ main {
   background: #eef2ff;
   color: #0f2c74;
   border-radius: 12px;
-  width: 42px;
-  height: 42px;
+  width: 48px;
+  height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -201,6 +201,22 @@ main {
   min-width: 110px;
   height: 46px;
   background: linear-gradient(135deg, #0d8bda, #1d4ed8);
+}
+
+@media (max-width: 640px) {
+  .log-input {
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    align-items: stretch;
+  }
+  .log-btn {
+    width: 100%;
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+  .log-field {
+    font-size: 16px;
+  }
 }
 
 button {
@@ -867,6 +883,8 @@ button.ghost .spinner {
 
 .details-inline summary {
   font-weight: 600;
+  min-height: 44px;
+  padding: 10px 0;
 }
 
 .total-line {
@@ -1281,6 +1299,7 @@ body.theme-dark,
   padding: 10px;
   background: #fff;
   color: #0f172a;
+  min-height: 44px;
 }
 
 :root.theme-dark .day-meals-list .meal-item,

@@ -24,6 +24,18 @@ export function resetPasswordApi(payload) {
   });
 }
 
+export function patchMealMeta(mealId, payload) {
+  return fetch(`${API_BASE}/meals/${mealId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${payload.token}` },
+    body: JSON.stringify({
+      consumedAt: payload.consumedAt,
+      mealType: payload.mealType,
+      tzOffsetMinutes: payload.tzOffsetMinutes,
+    }),
+  });
+}
+
 export function createMeal(body, token) {
   return fetch(`${API_BASE}/meals`, {
     method: "POST",

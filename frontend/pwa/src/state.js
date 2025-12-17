@@ -13,6 +13,7 @@ export const state = {
   text: "",
   result: null,
   fix: { active: false, mealId: null, text: "" },
+  fixTime: { active: false, mealId: null, date: "", time: "", slot: "", status: "idle" },
   editingItem: null, // { mealId, itemId, values }
   today: null, // { day, meals }
   error: null,

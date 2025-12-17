@@ -500,7 +500,7 @@ function renderAuth() {
     <div class="shell narrow">
       <header class="auth-header">
         <div class="brand-block">
-          <h1>Simple Nutrition Tracker</h1>
+          <h1 class="brand-title">Simple Nutrition Tracker</h1>
           <p>${mode === "register" ? "Create your account to start logging meals." : "Sign in to log meals and see reports."}</p>
         </div>
         <button id="theme-btn" class="ghost theme-icon" title="Toggle theme">${themeIcon}</button>
@@ -791,7 +791,7 @@ function renderApp() {
     <div class="shell">
       <header class="app-header">
         <div class="brand-block">
-          <h1>Simple Nutrition Tracker</h1>
+          <h1 class="brand-title">Simple Nutrition Tracker</h1>
           <p class="greeting">Hi ${displayName}</p>
         </div>
         <div class="tabs desktop-tabs">
@@ -800,8 +800,10 @@ function renderApp() {
           <button class="${tab === "trends" ? "tab active" : "tab"}" data-tab="trends">Trends</button>
           <button class="${tab === "profile" ? "tab active" : "tab"}" data-tab="profile">Profile</button>
         </div>
-        <button id="theme-btn" class="ghost theme-icon" title="Toggle theme">${themeIcon}</button>
-        <button class="ghost logout-btn" data-logout>Logout</button>
+        <div class="header-actions">
+          <button id="theme-btn" class="ghost theme-icon" title="Toggle theme">${themeIcon}</button>
+          <button class="ghost logout-btn" data-logout>Logout</button>
+        </div>
       </header>
       ${
         state.toast

@@ -444,7 +444,8 @@ body.theme-dark .primary,
 
 :root.theme-dark .inline-link,
 body.theme-dark .inline-link {
-  color: #e5e7eb;
+  color: #3b82f6;
+  text-decoration-color: #3b82f6;
 }
 
 .inline-tip {
@@ -463,6 +464,11 @@ body.theme-dark .inline-tip {
 :root.theme-dark .inline-tip .inline-link,
 body.theme-dark .inline-tip .inline-link {
   color: #0b1224 !important;
+}
+
+:root.theme-dark .link-button,
+body.theme-dark .link-button {
+  color: #3b82f6;
 }
 
 .password-field {
@@ -1029,6 +1035,13 @@ body.theme-dark,
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+
+:root.theme-dark .update-banner,
+body.theme-dark .update-banner {
+  background: #0f172a;
+  border-color: #1f2937;
+  color: #e5e7eb;
 }
 
 .theme-toggle {

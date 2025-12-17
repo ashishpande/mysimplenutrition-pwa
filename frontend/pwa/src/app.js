@@ -829,14 +829,6 @@ function renderApp() {
                 ${status === "loading" ? `<span class="spinner" aria-hidden="true"></span> Logging...` : "Log"}
               </button>
             </div>
-            ${
-              state.showTutorial
-                ? `<div class="inline-tip">
-                    <span>💡 Type or say what you ate, then hit Log.</span>
-                    <button class="link-button inline-link" id="dismiss-tutorial" type="button">Got it</button>
-                  </div>`
-                : ""
-            }
             <div class="status">${error ? `<span class="error">${error}</span>` : ""}</div>
           </section>
           ${
@@ -1413,9 +1405,9 @@ async function submitAuth() {
     render();
   } catch (err) {
     state.error = err.message;
-    render();
   } finally {
     state.auth.status = "idle";
+    render();
   }
 }
 

@@ -792,7 +792,7 @@ function renderApp() {
       <header class="app-header">
         <div class="brand-block">
           <h1>Simple Nutrition Tracker</h1>
-          <p>Hi ${displayName}</p>
+          <p class="greeting">Hi ${displayName}</p>
         </div>
         <div class="tabs desktop-tabs">
           <button class="${tab === "today" ? "tab active" : "tab"}" data-tab="today">Today</button>

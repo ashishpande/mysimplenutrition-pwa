@@ -134,12 +134,18 @@ main {
   .tabs.desktop-tabs {
     width: 100%;
     grid-column: 1 / -1;
+    grid-row: 2;
     flex-wrap: wrap;
     justify-content: flex-start;
     row-gap: 6px;
   }
   .brand-block {
+    grid-row: 1;
     padding: 10px 12px;
+  }
+  .theme-icon {
+    grid-row: 1;
+    justify-self: end;
   }
   .logout-btn {
     display: none;

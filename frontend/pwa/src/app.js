@@ -801,7 +801,7 @@ function renderApp() {
           <button class="${tab === "profile" ? "tab active" : "tab"}" data-tab="profile">Profile</button>
         </div>
         <button id="theme-btn" class="ghost theme-icon" title="Toggle theme">${themeIcon}</button>
-        <button class="ghost" id="logout-btn">Logout</button>
+        <button class="ghost logout-btn" data-logout>Logout</button>
       </header>
       ${
         state.toast
@@ -987,6 +987,7 @@ function renderApp() {
             <div class="status">${state.error ? `<span class="error">${state.error}</span>` : ""}</div>
             <div class="actions">
               <button id="profile-save" class="primary">Save changes${state.status === "saving" ? "<span class='spinner'></span>" : ""}</button>
+              <button class="ghost" data-logout>Logout</button>
             </div>
           </section>
           <section class="card">
@@ -1229,27 +1230,29 @@ function renderApp() {
       document.getElementById("mfa-token").oninput = (e) => (state.mfa.token = e.target.value);
     }
   }
-  document.getElementById("logout-btn").onclick = () => {
-    state.auth = {
-      mode: "login",
-      email: "",
-      password: "",
-      confirmPassword: "",
-      firstName: "",
-      lastName: "",
-      heightCm: "",
-      weightKg: "",
-      token: "",
-      accessToken: null,
-      user: null,
-      mfaRequired: false,
-      deviceToken: localStorage.getItem("mfaDeviceToken") || "",
-      rememberDevice: true,
+  document.querySelectorAll("[data-logout]").forEach((btn) => {
+    btn.onclick = () => {
+      state.auth = {
+        mode: "login",
+        email: "",
+        password: "",
+        confirmPassword: "",
+        firstName: "",
+        lastName: "",
+        heightCm: "",
+        weightKg: "",
+        token: "",
+        accessToken: null,
+        user: null,
+        mfaRequired: false,
+        deviceToken: localStorage.getItem("mfaDeviceToken") || "",
+        rememberDevice: true,
+      };
+      state.result = null;
+      state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };
+      render();
     };
-    state.result = null;
-    state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };
-    render();
-  };
+  });
   if (document.getElementById("refresh-app")) {
     document.getElementById("refresh-app").onclick = () => window.location.reload();
   }

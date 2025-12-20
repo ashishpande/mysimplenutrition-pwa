@@ -22,6 +22,8 @@ export const state = {
   toast: null,
   showTutorial: !localStorage.getItem("tutorialSeen"),
   miniBarKeys: ["calories", "protein_g", "carbs_g", "fat_g", "sugars_g"],
+  historyRangeDays: 7,
+  loadingMore: false,
   auth: {
     mode: "login", // login | register | reset
     email: "",
@@ -63,8 +65,13 @@ export const state = {
   },
   days: [],
   expandedDays: new Set(),
+  dayPanels: { nutrientsOpen: false, mealsOpen: false },
   loadingToday: false,
   loadingDays: false,
+  summary: {
+    today: { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false },
+    week: { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false },
+  },
 };
 
 function isLikelyUsUser() {

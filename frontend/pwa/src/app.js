@@ -1,5 +1,5 @@
 import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits } from "./state.js";
-import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta } from "./api.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary } from "./api.js";
 import { formatWhen, buildConsumedAtFromInputs } from "./time.js";
 
 const appEl = document.getElementById("app");
@@ -166,7 +166,7 @@ function renderDaySummary(dayTotals, meals = []) {
   if (!dayTotals) return "";
   const mealsList =
     meals?.length
-      ? `<details class="details-card">
+      ? `<details id="today-meals-details" class="details-card" ${state.dayPanels.mealsOpen ? "open" : ""}>
             <summary>Meals today</summary>
             <ul class="day-meals-list">
               ${meals
@@ -180,7 +180,7 @@ function renderDaySummary(dayTotals, meals = []) {
                       </div>
                       <div class="meal-text">${m.text || "Logged meal"}</div>
                       <div class="macro small">
-                        ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
+                        ${formatNumber(totals.calories, 0)} kcal — P ${formatNumber(totals.protein_g, 0)}g · C ${formatNumber(totals.carbs_g, 0)}g · F ${formatNumber(totals.fat_g, 0)}g
                       </div>
                       <details class="details-card details-inline">
                         <summary>More nutrition details</summary>
@@ -208,8 +208,8 @@ function renderDaySummary(dayTotals, meals = []) {
   return `
     <div class="day day-summary">
       <h3>Day so far (${formatLocalYMD(new Date())})</h3>
-      ${renderMiniBars(dayTotals, ["calories", "protein_g", "carbs_g", "fat_g"])}
-      <details class="details-card">
+          ${renderMiniBars(dayTotals, ["calories", "protein_g", "carbs_g", "fat_g"])}
+      <details id="today-nutrients-details" class="details-card" ${state.dayPanels.nutrientsOpen ? "open" : ""}>
         <summary>More nutrition details</summary>
         ${renderNutrientGrid(dayTotals)}
       </details>
@@ -260,6 +260,93 @@ function formatNumber(value, digits = 1) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "0";
   return n.toFixed(digits);
+}
+
+function computeTodayStats(today) {
+  if (!today || !today.meals?.length) {
+    return {
+      headline: "Today: no meals logged yet.",
+      avg: "",
+      macros: "",
+      mealCount: 0,
+      totalCalories: 0,
+      proteinG: 0,
+      carbsG: 0,
+      fatG: 0,
+    };
+  }
+  const totals = today.day || computeTotalsFromItems(today.meals.flatMap((m) => m.items || []));
+  const mealCount = today.meals.length;
+  return {
+    headline: `Today: ${mealCount} meal${mealCount === 1 ? "" : "s"} logged`,
+    avg: `Total ${Math.round(totals.calories || 0)} kcal`,
+    macros: `Macros: P ${Math.round(totals.protein_g || 0)}g · C ${Math.round(totals.carbs_g || 0)}g · F ${Math.round(totals.fat_g || 0)}g`,
+    mealCount,
+    totalCalories: Math.round(totals.calories || 0),
+    proteinG: Math.round(totals.protein_g || 0),
+    carbsG: Math.round(totals.carbs_g || 0),
+    fatG: Math.round(totals.fat_g || 0),
+  };
+}
+
+function computeWeekStats(days) {
+  const totalDays = 7;
+  if (!days?.length) {
+    return {
+      headline: "Last 7 calendar days: no data yet.",
+      avg: "",
+      macros: "",
+      loggedDays: 0,
+      totalCalories: 0,
+      avgCaloriesPerDay: 0,
+      proteinG: 0,
+      carbsG: 0,
+      fatG: 0,
+      mealCount: 0,
+    };
+  }
+  const totals = days.reduce(
+    (acc, day) => ({
+      calories: acc.calories + (day.calories || 0),
+      protein_g: acc.protein_g + (day.protein_g || 0),
+      carbs_g: acc.carbs_g + (day.carbs_g || 0),
+      fat_g: acc.fat_g + (day.fat_g || 0),
+      meals: acc.meals + (day.mealCount || (day.meals ? day.meals.length : 0) || 0),
+    }),
+    { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, meals: 0 }
+  );
+  const loggedDays = days.filter((day) => (day.calories || 0) > 0).length;
+  const avgCalories = totals.calories / Math.max(totalDays, 1);
+  return {
+    headline: `Last 7 calendar days: ${loggedDays} day${loggedDays === 1 ? "" : "s"} logged`,
+    avg: `Avg ${Math.round(avgCalories)} kcal/day`,
+    macros: `Macros: P ${Math.round(totals.protein_g)}g · C ${Math.round(totals.carbs_g)}g · F ${Math.round(totals.fat_g)}g`,
+    loggedDays,
+    totalCalories: Math.round(totals.calories || 0),
+    avgCaloriesPerDay: Math.round(avgCalories || 0),
+    proteinG: Math.round(totals.protein_g || 0),
+    carbsG: Math.round(totals.carbs_g || 0),
+    fatG: Math.round(totals.fat_g || 0),
+    mealCount: totals.meals,
+  };
+}
+
+function buildTodayLocalSummary(stats) {
+  if (!stats.mealCount) {
+    return "You haven't logged any meals today yet.";
+  }
+  return `You logged ${stats.mealCount} meal${stats.mealCount !== 1 ? "s" : ""} today totaling ${stats.totalCalories} kcal. Macros were Protein ${stats.proteinG}g, Carbs ${stats.carbsG}g, and Fat ${stats.fatG}g.`;
+}
+
+function buildWeeklyLocalSummary(stats) {
+  const daysLogged = stats.loggedDays || 0;
+  if (!stats.totalCalories && !daysLogged) {
+    return "No meals logged in the last 7 days.";
+  }
+  const mealCount = stats.mealCount || 0;
+  const mealLabel = mealCount === 1 ? "meal" : "meals";
+  const dayLabel = daysLogged === 1 ? "day" : "days";
+  return `Last 7 days: ${daysLogged} ${dayLabel} logged, ${mealCount || "?"} ${mealLabel} and ${stats.totalCalories.toLocaleString()} kcal, P ${stats.proteinG}g, C ${stats.carbsG}g, F ${stats.fatG}g (avg ${stats.avgCaloriesPerDay.toLocaleString()} kcal/day).`;
 }
 
 function normalizeTotals(total = {}) {
@@ -783,6 +870,8 @@ function renderApp() {
   const { listening, status, text, result, error, tab, days } = state;
   const displayName = [state.auth.user?.firstName, state.auth.user?.lastName].filter(Boolean).join(" ") || state.auth.user?.email || "";
   const themeIcon = state.theme === "dark" ? "🌙" : state.theme === "light" ? "☀️" : "🌓";
+  const todayBaseline = computeTodayStats(state.today);
+  const weekBaseline = computeWeekStats(days);
   appEl.innerHTML = `
     <div class="shell">
       <header class="app-header">
@@ -840,11 +929,18 @@ function renderApp() {
             : ""
         }
         ${
-          tab === "today" && state.today?.day
+          tab === "today"
             ? `
-          <section class="card">
+          ${state.today?.day ? `<section class="card">
             ${renderDaySummary(state.today.day, state.today.meals)}
-          </section>`
+          </section>` : ""}
+          <details id="today-summary" class="card summary-card" ${state.summary.today.open ? "open" : ""}>
+            <summary><span class="summary-title">Summary</span></summary>
+            <div class="summary-block">
+              <p>${getSummaryText("today", todayBaseline)}</p>
+            </div>
+            <p class="muted" style="margin-top: 8px;">Based on logged meals. Estimates may be approximate.</p>
+          </details>`
             : ""
         }
         ${
@@ -852,6 +948,13 @@ function renderApp() {
             ? `
           <section class="card">
             <h2>Recent days</h2>
+            <details id="week-summary" class="details-card summary-card" ${state.summary.week.open ? "open" : ""}>
+              <summary><span class="summary-caret" aria-hidden="true">▸</span><span class="summary-title">Summary</span></summary>
+              <div class="summary-block">
+                <p>${getSummaryText("week", weekBaseline)}</p>
+              </div>
+              <p class="muted" style="margin-top: 8px;">Based on logged meals · Estimates may be approximate</p>
+            </details>
             ${
               days.length
                 ? `<ul class="days">${days
@@ -869,38 +972,41 @@ function renderApp() {
                                 <li class="meal-item">
                                   <div class="meal-header">
                                     <span class="pill">${meal.mealType || "meal"}</span>
-                                    <span class="meal-time">${new Date(meal.consumedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                                    <span class="meal-time">· ${new Date(meal.consumedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
                                   </div>
                                   <div class="meal-text">${meal.text || "Logged meal"}</div>
                                   <div class="macro small">
-                                    ${formatNumber(totals.calories, 0)} kcal — P: ${formatNumber(totals.protein_g, 1)}g | C: ${formatNumber(totals.carbs_g, 1)}g | F: ${formatNumber(totals.fat_g, 1)}g
+                                    ${formatNumber(totals.calories, 0)} kcal — P ${formatNumber(totals.protein_g, 0)}g · C ${formatNumber(totals.carbs_g, 0)}g · F ${formatNumber(totals.fat_g, 0)}g
                                   </div>
                                   ${
                                     (meal.items || []).length
-                                      ? `<ul class="meal-items details">
-                                          ${meal.items
-                                            .map((item) => {
-                                              const n = item.nutrients || item;
-                                              return `
-                                                <li>
-                                                  <div class="item-title">${item.name || "Item"}</div>
-                                                  <div class="macro small">
-                                                    Calories: ${formatNumber(n.calories, 0)} kcal |
-                                                    Protein: ${formatNumber(n.protein_g, 1)}g |
-                                                    Carbs: ${formatNumber(n.carbs_g, 1)}g |
-                                                    Fiber: ${formatNumber(n.fiber_g, 1)}g |
-                                                    Sugar: ${formatNumber(n.sugars_g, 1)}g |
-                                                    Fat: ${formatNumber(n.fat_g, 1)}g |
-                                                    Sat: ${formatNumber(n.saturated_fat_g, 1)}g |
-                                                    Trans: ${formatNumber(n.trans_fat_g, 1)}g |
-                                                    Chol: ${formatNumber(n.cholesterol_mg, 0)}mg |
-                                                    Sodium: ${formatNumber(n.sodium_mg, 0)}mg
-                                                  </div>
-                                                </li>
-                                              `;
-                                            })
-                                            .join("")}
-                                        </ul>`
+                                      ? `<details class="meal-items details">
+                                          <summary>More nutrition details</summary>
+                                          <ul>
+                                            ${meal.items
+                                              .map((item) => {
+                                                const n = item.nutrients || item;
+                                                return `
+                                                  <li>
+                                                    <div class="item-title">${item.name || "Item"}</div>
+                                                    <div class="macro small">
+                                                      Calories: ${formatNumber(n.calories, 0)} kcal |
+                                                      Protein: ${formatNumber(n.protein_g, 1)}g |
+                                                      Carbs: ${formatNumber(n.carbs_g, 1)}g |
+                                                      Fiber: ${formatNumber(n.fiber_g, 1)}g |
+                                                      Sugar: ${formatNumber(n.sugars_g, 1)}g |
+                                                      Fat: ${formatNumber(n.fat_g, 1)}g |
+                                                      Sat: ${formatNumber(n.saturated_fat_g, 1)}g |
+                                                      Trans: ${formatNumber(n.trans_fat_g, 1)}g |
+                                                      Chol: ${formatNumber(n.cholesterol_mg, 0)}mg |
+                                                      Sodium: ${formatNumber(n.sodium_mg, 0)}mg
+                                                    </div>
+                                                  </li>
+                                                `;
+                                              })
+                                              .join("")}
+                                          </ul>
+                                        </details>`
                                       : ""
                                   }
                                 </li>
@@ -908,16 +1014,26 @@ function renderApp() {
                             }).join("")}
                           </ul>
                         ` : "";
+                        const highIntake = (d.calories || 0) >= 3200;
                         return `<li class="day-item" data-date="${dateStr}" style="cursor: pointer;">
-                          <div style="display: flex; align-items: center; gap: 8px;">
+                          <div style="display: flex; align-items: center; gap: 8px; align-items: flex-start;">
                             <span class="expand-icon">${isExpanded ? '▼' : '▶'}</span>
-                            <div><strong>${formatted}</strong><br/>${d.calories} kcal — P ${d.protein_g}g / C ${d.carbs_g}g / F ${d.fat_g}g</div>
+                            <div>
+                              <strong>${formatted}</strong><br/>
+                              <div class="macro small">${formatNumber(d.calories, 0)} kcal — P ${formatNumber(d.protein_g, 0)}g · C ${formatNumber(d.carbs_g, 0)}g · F ${formatNumber(d.fat_g, 0)}g</div>
+                              ${highIntake ? `<div class="muted small">High intake day</div>` : ""}
+                            </div>
                           </div>
                           ${mealsHtml}
                         </li>`;
                       }
                     )
-                    .join("")}</ul>`
+                    .join("")}</ul>
+                    <div class="inline-actions" style="margin-top: 12px;${days.length > 0 ? "" : " display:none;"}">
+                      <button id="load-more-days" class="ghost small" type="button"${state.loadingMore ? " disabled" : ""}>
+                        ${state.loadingMore ? `<span class="spinner"></span> Loading...` : "Load more days"}
+                      </button>
+                    </div>`
                 : `<div class="empty-state">
                     <div class="empty-icon">📊</div>
                     <h3>No history yet</h3>
@@ -1035,6 +1151,51 @@ function renderApp() {
   if (tab === "today") {
     document.getElementById("voice-btn").onclick = toggleVoice;
     document.getElementById("submit-btn").onclick = submitText;
+    const todaySummaryEl = document.getElementById("today-summary");
+    if (todaySummaryEl) {
+      todaySummaryEl.ontoggle = () => {
+        state.summary.today.open = todaySummaryEl.open;
+        if (todaySummaryEl.open) ensureSummary("today");
+      };
+    }
+    const todayNutrients = document.getElementById("today-nutrients-details");
+    if (todayNutrients) {
+      const summaryEl = todayNutrients.querySelector("summary");
+      if (summaryEl) {
+        summaryEl.onclick = (e) => {
+          e.preventDefault();
+          const nextOpen = !todayNutrients.open;
+          state.dayPanels.nutrientsOpen = nextOpen;
+          if (nextOpen) {
+            todayNutrients.setAttribute("open", "");
+          } else {
+            todayNutrients.removeAttribute("open");
+          }
+        };
+      }
+      todayNutrients.ontoggle = () => {
+        state.dayPanels.nutrientsOpen = todayNutrients.open;
+      };
+    }
+    const todayMealsDetails = document.getElementById("today-meals-details");
+    if (todayMealsDetails) {
+      const summaryEl = todayMealsDetails.querySelector("summary");
+      if (summaryEl) {
+        summaryEl.onclick = (e) => {
+          e.preventDefault();
+          const nextOpen = !todayMealsDetails.open;
+          state.dayPanels.mealsOpen = nextOpen;
+          if (nextOpen) {
+            todayMealsDetails.setAttribute("open", "");
+          } else {
+            todayMealsDetails.removeAttribute("open");
+          }
+        };
+      }
+      todayMealsDetails.ontoggle = () => {
+        state.dayPanels.mealsOpen = todayMealsDetails.open;
+      };
+    }
     if (document.getElementById("fixText")) {
       document.getElementById("fixText").oninput = (e) => (state.fix.text = e.target.value);
     }
@@ -1056,6 +1217,7 @@ function renderApp() {
             state.result = null;
             await fetchToday();
             await fetchDays();
+            invalidateAllSummaries();
           } catch (err) {
             state.error = "Could not remove the previous meal. You can still log the update.";
           }
@@ -1169,6 +1331,9 @@ function renderApp() {
             throw new Error(data?.error || "Save failed");
           }
           
+          await fetchToday();
+          await fetchDays();
+          invalidateAllSummaries();
           state.fixTime.status = "idle";
           state.fixTime.active = false;
           showToast("Your changes have been saved");
@@ -1200,9 +1365,39 @@ function renderApp() {
     };
   });
   if (tab === "history") {
+    const weekDetails = document.getElementById("week-summary");
+    if (weekDetails) {
+      const summaryEl = weekDetails.querySelector("summary");
+      // Manual toggle to avoid stuck-open state
+      summaryEl.onclick = (e) => {
+        e.preventDefault();
+        const nextOpen = !weekDetails.open;
+        state.summary.week.open = nextOpen;
+        if (nextOpen) {
+          weekDetails.setAttribute("open", "");
+          ensureSummary("week");
+        } else {
+          weekDetails.removeAttribute("open");
+          render();
+        }
+      };
+      weekDetails.ontoggle = () => {
+        state.summary.week.open = weekDetails.open;
+      };
+    }
     document.querySelectorAll(".day-item").forEach((item) => {
       item.onclick = () => toggleDayExpansion(item.dataset.date);
     });
+    document.querySelectorAll(".day-item details summary").forEach((summary) => {
+      summary.onclick = (e) => {
+        e.stopPropagation();
+      };
+    });
+    const loadMoreBtn = document.getElementById("load-more-days");
+    if (loadMoreBtn) {
+      loadMoreBtn.onclick = () => loadMoreDays();
+      loadMoreBtn.onanimationstart = (e) => e.stopPropagation();
+    }
   }
   if (tab === "profile") {
     document.getElementById("profile-first").oninput = (e) => (state.profileForm.firstName = e.target.value);
@@ -1249,6 +1444,10 @@ function renderApp() {
         rememberDevice: true,
       };
       state.result = null;
+      state.summary.today = { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false };
+      state.summary.week = { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false };
+      state.dayPanels = { nutrientsOpen: false, mealsOpen: false };
+      state.historyRangeDays = 7;
       state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };
       render();
     };
@@ -1560,6 +1759,71 @@ function toggleVoice() {
   }, 10000);
   render();
 }
+function invalidateSummary(range) {
+  const target = state.summary[range];
+  const wasOpen = target.open;
+  target.status = "idle";
+  target.text = "";
+  target.summaryKey = "";
+  target.generatedAt = null;
+  target.source = "local";
+  if (wasOpen) {
+    ensureSummary(range);
+  }
+}
+
+function invalidateAllSummaries() {
+  invalidateSummary("today");
+  invalidateSummary("week");
+}
+
+function getLocalSummary(range) {
+  const stats = range === "today" ? computeTodayStats(state.today) : computeWeekStats(state.days);
+  return range === "today" ? buildTodayLocalSummary(stats) : buildWeeklyLocalSummary(stats);
+}
+
+function getSummaryText(range, stats) {
+  const summaryState = state.summary[range];
+  if (summaryState.status === "loading") return "Creating summary...";
+  if (summaryState.status === "success" && summaryState.text) return summaryState.text;
+  return range === "today" ? buildTodayLocalSummary(stats) : buildWeeklyLocalSummary(stats);
+}
+
+async function loadSummary(range) {
+  if (!state.auth.accessToken) return;
+  const stats = range === "today" ? computeTodayStats(state.today) : computeWeekStats(state.days);
+  const localText = range === "today" ? buildTodayLocalSummary(stats) : buildWeeklyLocalSummary(stats);
+  const summaryState = state.summary[range];
+  summaryState.status = "loading";
+  summaryState.text = localText;
+  summaryState.source = "local";
+  render();
+  try {
+    const res = await fetchSummary(range, state.auth.accessToken);
+    const data = await parseJsonSafe(res);
+    if (!res.ok || !data?.text) throw new Error(data?.error || "summary_failed");
+    summaryState.status = "success";
+    summaryState.text = data.text;
+    summaryState.summaryKey = data.summaryKey || "";
+    summaryState.generatedAt = data.generatedAt || new Date().toISOString();
+    summaryState.source = "ai";
+  } catch (_err) {
+    summaryState.status = "success";
+    summaryState.text = localText;
+    summaryState.source = "local";
+  } finally {
+    render();
+  }
+}
+
+function ensureSummary(range) {
+  const summaryState = state.summary[range];
+  if (summaryState.status === "idle") {
+    loadSummary(range);
+  } else {
+    render();
+  }
+}
 
 async function submitText() {
   if (!state.text.trim()) {
@@ -1587,6 +1851,7 @@ async function submitText() {
     }
     state.result = data;
     state.text = "";
+    invalidateAllSummaries();
     fetchToday();
     fetchDays();
   } catch (err) {
@@ -1602,7 +1867,7 @@ async function fetchDays() {
   state.loadingDays = true;
   const end = new Date();
   const start = new Date();
-  start.setDate(end.getDate() - 6);
+  start.setDate(end.getDate() - (state.historyRangeDays - 1));
   const startStr = formatLocalYMD(start);
   const endStr = formatLocalYMD(end);
   try {
@@ -1617,7 +1882,17 @@ async function fetchDays() {
     state.error = err.message;
   } finally {
     state.loadingDays = false;
+    render();
   }
+}
+
+async function loadMoreDays() {
+  state.loadingMore = true;
+  render();
+  state.historyRangeDays += 7;
+  await fetchDays();
+  state.loadingMore = false;
+  render();
 }
 
 async function fetchDayMeals(dateStr) {
@@ -1893,6 +2168,8 @@ async function saveItemEdits(mealId, itemId) {
     if (state.result?.meal && state.result.meal.id === mealId) {
       state.result.meal.adjusted = true;
     }
+    await fetchDays();
+    invalidateAllSummaries();
   } catch (err) {
     state.error = err.message;
   } finally {

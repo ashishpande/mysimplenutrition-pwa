@@ -51,6 +51,15 @@ services:
     volumes:
       - api_data:/data
 
+  frontend:
+    build:
+      context: .
+      dockerfile: ./frontend/pwa/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
 volumes:
   ollama_models:
   api_data:

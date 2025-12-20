@@ -76,3 +76,12 @@ export function deleteMeal(mealId, token, tzOffsetMinutes) {
     },
   });
 }
+
+export function fetchSummary(range, token, days = 7) {
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  const daysParam = range === "week" ? `&days=${days}` : "";
+  return fetch(`${API_BASE}/summary?range=${range}&tzOffsetMinutes=${tzOffsetMinutes}${daysParam}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+}

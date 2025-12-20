@@ -38,6 +38,7 @@ const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
 const FORCE_LLM = process.env.FORCE_LLM === "true" || env !== "production";
 const useGroq = !!process.env.GROQ_API_KEY;
 const hasOllama = !!process.env.OLLAMA_HOST;
+const SKIP_LLM = process.env.SKIP_LLM === "true";
 const estimateNutrition = async (name) => {
   if (hasOllama) {
     try {
@@ -151,6 +152,86 @@ function accumulateNutrients(target, source) {
     next[key] = (next[key] || 0) + (source[key] || 0);
   }
   return next;
+}
+
+function hashPayload(payload) {
+  return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+function formatMacroSummary({ calories, protein_g, carbs_g, fat_g }) {
+  return `${Math.round(calories)} kcal, P ${Math.round(protein_g)}g, C ${Math.round(carbs_g)}g, F ${Math.round(fat_g)}g`;
+}
+
+function buildTodaySummaryText(mealCount, totals) {
+  if (!mealCount) return "No meals logged yet today.";
+  return `Today you logged ${mealCount} meal${mealCount === 1 ? "" : "s"} totaling ${formatMacroSummary(totals)}.`;
+}
+
+function buildWeekSummaryText(dayCount, mealCount, totals, avgCalories) {
+  if (!mealCount) return "No meals logged in the last 7 days.";
+  const dayLine = dayCount ? `${dayCount} day${dayCount === 1 ? "" : "s"} logged` : "no days logged";
+  return `Last 7 days: ${dayLine}, ${mealCount} meal${mealCount === 1 ? "" : "s"} and ${formatMacroSummary(totals)} (avg ${Math.round(avgCalories)} kcal/day).`;
+}
+
+async function generateGroqSummary(prompt) {
+  if (!useGroq || SKIP_LLM) return null;
+  const model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 160,
+    }),
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
+  if (!response.ok) throw new Error(`groq_summary_${response.status}`);
+  const data = await response.json();
+  const text = data?.choices?.[0]?.message?.content?.trim();
+  return text || null;
+}
+
+function parseSummaryJson(text) {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  try {
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!parsed || typeof parsed.body !== "string") return null;
+    return {
+      title: typeof parsed.title === "string" ? parsed.title : "",
+      body: parsed.body.trim(),
+      highlights: Array.isArray(parsed.highlights) ? parsed.highlights.slice(0, 2).map((h) => String(h)) : [],
+    };
+  } catch (_err) {
+    return null;
+  }
+}
+
+function normalizeDigits(value) {
+  return String(value).replace(/,/g, "");
+}
+
+function summaryBodyIncludesFacts(body, facts) {
+  if (!body) return false;
+  const normalized = body.replace(/,/g, "");
+  const required = [
+    `${facts.daysLogged} of ${facts.daysInRange}`,
+    String(facts.totalCalories),
+    String(facts.avgCaloriesPerDay),
+    String(facts.totalProteinG),
+    String(facts.totalCarbsG),
+    String(facts.totalFatG),
+  ];
+  return required.every((part) => normalized.includes(normalizeDigits(part)));
 }
 
 async function sendResetEmail(email, token) {
@@ -1271,6 +1352,332 @@ app.get("/api/days", authMiddleware, (req, res) => {
       console.error(err);
       res.status(500).json({ error: "server_error" });
     });
+});
+
+app.get("/api/summary", authMiddleware, async (req, res) => {
+  const userId = req.user.userId;
+  const range = String(req.query.range || "").toLowerCase();
+  const tzOffsetMinutes = Number(req.query.tzOffsetMinutes || 0);
+  const days = Math.max(1, Number(req.query.days || 7));
+  if (!["today", "week"].includes(range)) {
+    return res.status(400).json({ error: "range must be today or week" });
+  }
+
+  try {
+    if (range === "today") {
+      const dateStr = formatLocalYMD(new Date(), tzOffsetMinutes);
+      const { startUtc, endUtc } = computeLocalDayWindow(dateStr, tzOffsetMinutes);
+      const mealsForDay = await prisma.meal.findMany({
+        where: { userId, consumedAt: { gte: startUtc, lt: endUtc } },
+        include: { items: true },
+        orderBy: { consumedAt: "desc" },
+      });
+      const totals = mealsForDay.reduce(
+        (acc, meal) =>
+          accumulateNutrients(
+            acc,
+            meal.items.reduce(
+              (mAcc, item) =>
+                accumulateNutrients(mAcc, {
+                  calories: item.calories,
+                  protein_g: item.protein_g,
+                  carbs_g: item.carbs_g,
+                  fat_g: item.fat_g,
+                  fiber_g: item.fiber_g,
+                  sugars_g: item.sugars_g,
+                  saturated_fat_g: item.saturated_fat_g,
+                  trans_fat_g: item.trans_fat_g,
+                  cholesterol_mg: item.cholesterol_mg,
+                  sodium_mg: item.sodium_mg,
+                  vitamin_d_mcg: item.vitamin_d_mcg,
+                  calcium_mg: item.calcium_mg,
+                  iron_mg: item.iron_mg,
+                  potassium_mg: item.potassium_mg,
+                }),
+              { ...emptyNutrients }
+            )
+          ),
+        { ...emptyNutrients }
+      );
+      const mealCount = mealsForDay.length;
+      const summaryKey = hashPayload({
+        dateStr,
+        meals: mealsForDay.map((meal) => ({
+          id: meal.id,
+          consumedAt: meal.consumedAt.toISOString(),
+          text: meal.text,
+          items: meal.items.map((item) => ({
+            id: item.id,
+            calories: item.calories,
+            protein_g: item.protein_g,
+            carbs_g: item.carbs_g,
+            fat_g: item.fat_g,
+            fiber_g: item.fiber_g,
+            sugars_g: item.sugars_g,
+            saturated_fat_g: item.saturated_fat_g,
+            trans_fat_g: item.trans_fat_g,
+            cholesterol_mg: item.cholesterol_mg,
+            sodium_mg: item.sodium_mg,
+            vitamin_d_mcg: item.vitamin_d_mcg,
+            calcium_mg: item.calcium_mg,
+            iron_mg: item.iron_mg,
+            potassium_mg: item.potassium_mg,
+          })),
+        })),
+      });
+
+      const cached = await prisma.summary.findFirst({
+        where: { userId, range, summaryKey },
+        orderBy: { createdAt: "desc" },
+      });
+      const ttlMs = 6 * 60 * 60 * 1000;
+      if (cached && Date.now() - cached.createdAt.getTime() < ttlMs) {
+        return res.json({
+          text: cached.text,
+          aiSummary: null,
+          summaryKey,
+          generatedAt: cached.createdAt.toISOString(),
+          cached: true,
+        });
+      }
+
+      const baseline = buildTodaySummaryText(mealCount, totals);
+      let text = baseline;
+      let model = null;
+      let aiSummary = null;
+      if (useGroq && !SKIP_LLM) {
+        const summaryFacts = {
+          rangeLabel: "Today",
+          daysInRange: 1,
+          daysLogged: mealCount ? 1 : 0,
+          mealsLogged: mealCount,
+          totalCalories: Math.round(totals.calories || 0),
+          avgCaloriesPerDay: Math.round(totals.calories || 0),
+          totalProteinG: Math.round(totals.protein_g || 0),
+          totalCarbsG: Math.round(totals.carbs_g || 0),
+          totalFatG: Math.round(totals.fat_g || 0),
+        };
+        const prompt = `You are writing a brief daily food log summary for a nutrition tracking app.
+You MUST use the provided facts exactly. Do not change or recalculate numbers.
+Do not add advice, warnings, recommendations, or moral judgment.
+Do not mention “AI”, “LLM”, “Groq”, “model”, or “cached”.
+Keep it friendly, simple, and neutral.
+
+Write a daily summary in a conversational tone using ONLY these facts.
+
+Facts (JSON):
+${JSON.stringify(summaryFacts)}
+
+Requirements:
+- 2 to 4 short sentences total.
+- Mention daysLogged out of daysInRange.
+- Mention totalCalories and avgCaloriesPerDay.
+- Mention macros as “Protein/Carbs/Fat”.
+- Avoid bullet points.
+- Avoid exclamation overload (max one “!”).
+- Avoid medical claims.
+
+Return STRICT JSON with this shape:
+{
+  "title": "Today",
+  "body": "string",
+  "highlights": ["string", "string"]
+}`;
+        const aiText = await generateGroqSummary(prompt);
+        const parsed = parseSummaryJson(aiText);
+        if (parsed && summaryBodyIncludesFacts(parsed.body, summaryFacts)) {
+          aiSummary = parsed;
+          text = parsed.body || baseline;
+          model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+        }
+      }
+
+      const created = await prisma.summary.create({
+        data: {
+          userId,
+          range,
+          startDate: new Date(dateStr),
+          endDate: new Date(dateStr),
+          summaryKey,
+          text,
+          model,
+        },
+      });
+      return res.json({
+        text,
+        aiSummary,
+        summaryKey,
+        generatedAt: created.createdAt.toISOString(),
+        cached: false,
+      });
+    }
+
+    const endDate = new Date();
+    const endStr = formatLocalYMD(endDate, tzOffsetMinutes);
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - (days - 1));
+    const startStr = formatLocalYMD(startDate, tzOffsetMinutes);
+    const offsetMs = tzOffsetMinutes * 60000;
+    const startWindow = new Date(new Date(`${startStr}T00:00:00Z`).getTime() + offsetMs);
+    const endWindow = new Date(new Date(`${endStr}T00:00:00Z`).getTime() + offsetMs);
+
+    const [dailyTotals, mealsInRange] = await Promise.all([
+      prisma.dailyTotal.findMany({
+        where: { userId, date: { gte: startWindow, lte: endWindow } },
+        orderBy: { date: "asc" },
+      }),
+      prisma.meal.findMany({
+        where: { userId, consumedAt: { gte: computeLocalDayWindow(startStr, tzOffsetMinutes).startUtc, lt: computeLocalDayWindow(endStr, tzOffsetMinutes).endUtc } },
+        select: { consumedAt: true },
+      }),
+    ]);
+
+    const dayTotalsByDate = new Map();
+    dailyTotals.forEach((day) => {
+      dayTotalsByDate.set(formatLocalYMD(day.date, tzOffsetMinutes), day);
+    });
+    const mealCountByDate = new Map();
+    mealsInRange.forEach((meal) => {
+      const key = formatLocalYMD(meal.consumedAt, tzOffsetMinutes);
+      mealCountByDate.set(key, (mealCountByDate.get(key) || 0) + 1);
+    });
+
+    const daysList = [];
+    for (let i = 0; i < days; i += 1) {
+      const d = new Date(startDate);
+      d.setDate(startDate.getDate() + i);
+      const key = formatLocalYMD(d, tzOffsetMinutes);
+      const totals = dayTotalsByDate.get(key) || { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 };
+      daysList.push({
+        date: key,
+        totals: {
+          calories: totals.calories,
+          protein_g: totals.protein_g,
+          carbs_g: totals.carbs_g,
+          fat_g: totals.fat_g,
+        },
+        meals: mealCountByDate.get(key) || 0,
+      });
+    }
+
+    const totals = daysList.reduce(
+      (acc, day) => ({
+        calories: acc.calories + (day.totals.calories || 0),
+        protein_g: acc.protein_g + (day.totals.protein_g || 0),
+        carbs_g: acc.carbs_g + (day.totals.carbs_g || 0),
+        fat_g: acc.fat_g + (day.totals.fat_g || 0),
+      }),
+      { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
+    );
+    const mealCount = daysList.reduce((acc, day) => acc + (day.meals || 0), 0);
+    const dayCount = daysList.filter((day) => day.meals > 0 || day.totals.calories > 0).length;
+    const avgCalories = totals.calories / Math.max(days, 1);
+    const summaryKey = hashPayload({ startStr, endStr, days: daysList });
+
+    const cached = await prisma.summary.findFirst({
+      where: { userId, range, summaryKey },
+      orderBy: { createdAt: "desc" },
+    });
+    const ttlMs = 24 * 60 * 60 * 1000;
+    if (cached && Date.now() - cached.createdAt.getTime() < ttlMs) {
+      return res.json({
+        text: cached.text,
+        aiSummary: null,
+        summaryKey,
+        generatedAt: cached.createdAt.toISOString(),
+        cached: true,
+      });
+    }
+
+    const baseline = buildWeekSummaryText(dayCount, mealCount, totals, avgCalories);
+    let text = baseline;
+    let model = null;
+    let aiSummary = null;
+    if (useGroq && !SKIP_LLM) {
+      const highestDay = daysList.reduce((acc, day) => {
+        if (!acc || day.totals.calories > acc.calories) {
+          return { date: day.date, calories: Math.round(day.totals.calories || 0) };
+        }
+        return acc;
+      }, null);
+      const lowestDay = daysList.reduce((acc, day) => {
+        if (day.totals.calories <= 0) return acc;
+        if (!acc || day.totals.calories < acc.calories) {
+          return { date: day.date, calories: Math.round(day.totals.calories || 0) };
+        }
+        return acc;
+      }, null);
+      const summaryFacts = {
+        rangeLabel: `Last ${days} calendar days`,
+        daysInRange: days,
+        daysLogged: dayCount,
+        mealsLogged: mealCount,
+        totalCalories: Math.round(totals.calories || 0),
+        avgCaloriesPerDay: Math.round(avgCalories || 0),
+        totalProteinG: Math.round(totals.protein_g || 0),
+        totalCarbsG: Math.round(totals.carbs_g || 0),
+        totalFatG: Math.round(totals.fat_g || 0),
+        highestDay: highestDay?.calories ? highestDay : undefined,
+        lowestDay: lowestDay?.calories ? lowestDay : undefined,
+      };
+      const prompt = `You are writing a brief weekly food log summary for a nutrition tracking app.
+You MUST use the provided facts exactly. Do not change or recalculate numbers.
+Do not add advice, warnings, recommendations, or moral judgment.
+Do not mention “AI”, “LLM”, “Groq”, “model”, or “cached”.
+Keep it friendly, simple, and neutral.
+
+Write a weekly summary in a conversational tone using ONLY these facts.
+
+Facts (JSON):
+${JSON.stringify(summaryFacts)}
+
+Requirements:
+- 2 to 4 short sentences total.
+- Mention daysLogged out of daysInRange.
+- Mention totalCalories and avgCaloriesPerDay.
+- Mention macros as “Protein/Carbs/Fat”.
+- If highestDay and lowestDay exist, add 1 short sentence comparing them (optional).
+- Avoid bullet points.
+- Avoid exclamation overload (max one “!”).
+- Avoid medical claims.
+
+Return STRICT JSON with this shape:
+{
+  "title": "Last 7 days",
+  "body": "string",
+  "highlights": ["string", "string"]
+}`;
+      const aiText = await generateGroqSummary(prompt);
+      const parsed = parseSummaryJson(aiText);
+      if (parsed && summaryBodyIncludesFacts(parsed.body, summaryFacts)) {
+        aiSummary = parsed;
+        text = parsed.body || baseline;
+        model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+      }
+    }
+
+    const created = await prisma.summary.create({
+      data: {
+        userId,
+        range,
+        startDate: new Date(startStr),
+        endDate: new Date(endStr),
+        summaryKey,
+        text,
+        model,
+      },
+    });
+    return res.json({
+      text,
+      aiSummary,
+      summaryKey,
+      generatedAt: created.createdAt.toISOString(),
+      cached: false,
+    });
+  } catch (err) {
+    console.error("summary_error", err);
+    return res.status(500).json({ error: "summary_failed" });
+  }
 });
 
 // Allow users to edit nutrient info for a logged meal item.

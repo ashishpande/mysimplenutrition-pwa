@@ -1042,6 +1042,112 @@ details[open] > summary .summary-caret {
   border: 1px solid #cbd5e1;
 }
 
+.trend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.trend-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px;
+  background: #f8fbff;
+}
+
+.trend-label {
+  font-weight: 600;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+.trend-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.trend-sub {
+  font-size: 12px;
+  color: #475569;
+  margin-top: 2px;
+}
+
+.trend-delta {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trend-delta.up {
+  color: #16a34a;
+}
+
+.trend-delta.down {
+  color: #dc2626;
+}
+
+.trend-summary {
+  margin-top: 12px;
+  color: #0f172a;
+}
+
+.trend-drawer {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  display: none;
+}
+
+.trend-drawer.open {
+  display: block;
+}
+
+.trend-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trend-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.trend-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.trend-option.disabled {
+  opacity: 0.6;
+}
+
+.trend-helper {
+  margin-top: 8px;
+}
+
+.trend-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .total-line {
   display: flex;
   align-items: center;

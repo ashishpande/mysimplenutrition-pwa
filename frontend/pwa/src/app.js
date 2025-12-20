@@ -1,8 +1,34 @@
 import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits } from "./state.js";
-import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary } from "./api.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary, fetchTrends } from "./api.js";
 import { formatWhen, buildConsumedAtFromInputs } from "./time.js";
 
 const appEl = document.getElementById("app");
+const trendMetricOptions = [
+  { key: "calories", label: "Calories", unit: "kcal" },
+  { key: "protein", label: "Protein", unit: "g" },
+  { key: "carbs", label: "Carbs", unit: "g" },
+  { key: "fat", label: "Fat", unit: "g" },
+  { key: "fiber", label: "Fiber", unit: "g" },
+  { key: "sugar", label: "Sugar", unit: "g" },
+  { key: "sodium", label: "Sodium", unit: "mg" },
+  { key: "consistency", label: "Consistency", unit: "days" },
+];
+const defaultTrendMetrics = ["calories", "protein", "consistency"];
+
+function getTrendPreferences() {
+  const metrics = state.auth.user?.trendPreferences?.metrics;
+  if (Array.isArray(metrics) && metrics.length) return metrics;
+  return defaultTrendMetrics;
+}
+
+function hydrateTrendPreferences() {
+  const metrics = state.auth.user?.trendPreferences?.metrics;
+  state.trendPreferences.metrics = Array.isArray(metrics) && metrics.length ? [...metrics] : [...defaultTrendMetrics];
+}
+
+function getTrendOptionByKey(key) {
+  return trendMetricOptions.find((opt) => opt.key === key);
+}
 
 function maybeInitResetFromUrl() {
   if (state.auth.mode === "reset" && state.auth.token) return;
@@ -535,6 +561,86 @@ function buildProfileFormFromUser(user) {
   };
 }
 
+function formatTrendValue(value, unit) {
+  if (unit === "kcal" || unit === "mg" || unit === "days") {
+    return `${formatNumber(value, 0)} ${unit}`;
+  }
+  return `${formatNumber(value, 1)} ${unit}`;
+}
+
+function renderTrendMetrics(metrics) {
+  if (!metrics.length) {
+    return `<div class="empty-state">
+      <div class="empty-icon">📈</div>
+      <h3>No trend data yet</h3>
+      <p>Log meals for a few days to see your trends.</p>
+    </div>`;
+  }
+  return `<div class="trend-grid">
+    ${metrics
+      .map((metric) => {
+        const delta = metric.delta || 0;
+        const deltaSign = delta > 0 ? "+" : "";
+        return `
+        <div class="trend-card">
+          <div class="trend-label">${metric.label}</div>
+          <div class="trend-value">${formatTrendValue(metric.last7Avg, metric.unit)}</div>
+          <div class="trend-sub">${formatTrendValue(metric.prev7Avg, metric.unit)} last week</div>
+          <div class="trend-delta ${delta >= 0 ? "up" : "down"}">${deltaSign}${formatTrendValue(delta, metric.unit)}</div>
+        </div>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function renderTrendPreferencesDrawer() {
+  const selected = state.trendPreferences.metrics || [];
+  const maxReached = selected.length >= 3;
+  return `
+    <div class="trend-drawer ${state.trendPreferences.open ? "open" : ""}">
+      <div class="trend-drawer-header">
+        <div>
+          <strong>Customize trends</strong>
+          <div class="muted small">Choose up to 3 nutrients you want to track over time.</div>
+        </div>
+        <button class="ghost small" id="trend-customize-close">Close</button>
+      </div>
+      <div class="trend-options">
+        ${trendMetricOptions
+          .map((opt) => {
+            const checked = selected.includes(opt.key);
+            const disabled = !checked && maxReached;
+            return `
+              <label class="trend-option ${disabled ? "disabled" : ""}">
+                <input type="checkbox" data-trend-metric="${opt.key}" ${checked ? "checked" : ""} ${disabled ? "disabled" : ""} />
+                <span>${opt.label}</span>
+              </label>`;
+          })
+          .join("")}
+      </div>
+      <div class="trend-helper muted small">You can change this anytime.</div>
+      ${state.trendPreferences.error ? `<div class="error">${state.trendPreferences.error}</div>` : ""}
+      <div class="trend-actions">
+        <button class="primary small" id="trend-save" ${state.trendPreferences.saving ? "disabled" : ""}>
+          ${state.trendPreferences.saving ? `<span class="spinner"></span> Saving...` : "Save"}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function toggleTrendMetricSelection(key, checked) {
+  const selected = new Set(state.trendPreferences.metrics || []);
+  if (checked) {
+    if (selected.size >= 3) return;
+    selected.add(key);
+  } else {
+    selected.delete(key);
+  }
+  state.trendPreferences.metrics = Array.from(selected);
+  render();
+}
+
 function render() {
   maybeInitResetFromUrl();
   if (!state.auth.accessToken) {
@@ -868,6 +974,12 @@ function renderAuth() {
 
 function renderApp() {
   const { listening, status, text, result, error, tab, days } = state;
+  if (!state.trendPreferences.metrics.length) {
+    hydrateTrendPreferences();
+  }
+  if (tab === "trends" && state.trends.status === "idle") {
+    fetchTrendsData();
+  }
   const displayName = [state.auth.user?.firstName, state.auth.user?.lastName].filter(Boolean).join(" ") || state.auth.user?.email || "";
   const themeIcon = state.theme === "dark" ? "🌙" : state.theme === "light" ? "☀️" : "🌓";
   const todayBaseline = computeTodayStats(state.today);
@@ -1047,12 +1159,14 @@ function renderApp() {
           tab === "trends"
             ? `
           <section class="card">
-            <h2>7-day trend (Calories)</h2>
-            ${days.length ? renderTrend(days) : `<div class="empty-state">
-              <div class="empty-icon">📈</div>
-              <h3>No trend data yet</h3>
-              <p>Log meals for a few days to see your calorie trends.</p>
-            </div>`}
+            <div class="trend-header">
+              <h2>Recent trends</h2>
+              <button class="link-button small" id="trend-customize-toggle">Customize trends</button>
+            </div>
+            ${state.trends.status === "loading" ? `<div class="muted">Loading trends...</div>` : ""}
+            ${renderTrendMetrics(state.trends.metrics || [])}
+            ${state.trends.summaryText ? `<p class="trend-summary">${state.trends.summaryText}</p>` : ""}
+            ${renderTrendPreferencesDrawer()}
           </section>`
             : ""
         }
@@ -1355,6 +1469,9 @@ function renderApp() {
       if (state.tab === "history" || state.tab === "trends") {
         fetchDays();
       }
+      if (state.tab === "trends") {
+        fetchTrendsData();
+      }
       if (state.tab === "today") {
         fetchToday();
       }
@@ -1397,6 +1514,29 @@ function renderApp() {
     if (loadMoreBtn) {
       loadMoreBtn.onclick = () => loadMoreDays();
       loadMoreBtn.onanimationstart = (e) => e.stopPropagation();
+    }
+  }
+  if (tab === "trends") {
+    const toggleBtn = document.getElementById("trend-customize-toggle");
+    if (toggleBtn) {
+      toggleBtn.onclick = () => {
+        state.trendPreferences.open = !state.trendPreferences.open;
+        render();
+      };
+    }
+    const closeBtn = document.getElementById("trend-customize-close");
+    if (closeBtn) {
+      closeBtn.onclick = () => {
+        state.trendPreferences.open = false;
+        render();
+      };
+    }
+    document.querySelectorAll("[data-trend-metric]").forEach((input) => {
+      input.onchange = (e) => toggleTrendMetricSelection(e.target.dataset.trendMetric, e.target.checked);
+    });
+    const saveBtn = document.getElementById("trend-save");
+    if (saveBtn) {
+      saveBtn.onclick = () => updateTrendPreferences();
     }
   }
   if (tab === "profile") {
@@ -1449,6 +1589,8 @@ function renderApp() {
       state.dayPanels = { nutrientsOpen: false, mealsOpen: false };
       state.historyRangeDays = 7;
       state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };
+      state.trendPreferences = { metrics: [...defaultTrendMetrics], open: false, saving: false, error: null };
+      state.trends = { status: "idle", metrics: [], summaryText: "", range: null };
       render();
     };
   });
@@ -1586,6 +1728,7 @@ async function submitAuth() {
     if (!res.ok) throw new Error(data?.error || "Auth failed");
     state.auth.accessToken = data.accessToken;
     state.auth.user = data.user;
+    hydrateTrendPreferences();
     state.profileForm.firstName = data.user?.firstName || "";
     state.profileForm.lastName = data.user?.lastName || "";
     state.auth.mfaRequired = false;
@@ -1954,6 +2097,29 @@ async function fetchToday() {
   }
 }
 
+async function fetchTrendsData() {
+  if (!state.auth.accessToken) return;
+  const metrics = getTrendPreferences();
+  state.trends.status = "loading";
+  render();
+  try {
+    const res = await fetchTrends(metrics, state.auth.accessToken);
+    const data = await parseJsonSafe(res);
+    if (!res.ok || !data) throw new Error(data?.error || "Failed to load trends");
+    state.trends = {
+      status: "success",
+      metrics: data.metrics || [],
+      summaryText: data.summaryText || "",
+      range: data.range || null,
+    };
+  } catch (err) {
+    state.trends.status = "error";
+    state.trends.summaryText = "Unable to load trends right now.";
+  } finally {
+    render();
+  }
+}
+
 async function updateProfile() {
   state.status = "saving";
   state.error = null;
@@ -1979,6 +2145,7 @@ async function updateProfile() {
     const data = await parseJsonSafe(res);
       if (!res.ok) throw new Error(data?.error || "Failed to update profile");
     state.auth.user = data.user;
+    hydrateTrendPreferences();
     state.profileForm = buildProfileFormFromUser(data.user);
     state.error = null;
     showToast("Profile updated successfully!");
@@ -1986,6 +2153,39 @@ async function updateProfile() {
     state.error = err.message;
   } finally {
     state.status = "idle";
+    render();
+  }
+}
+
+async function updateTrendPreferences() {
+  if (!state.auth.accessToken) return;
+  state.trendPreferences.saving = true;
+  state.trendPreferences.error = null;
+  render();
+  try {
+    const res = await fetch(`${API_BASE}/profile`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.auth.accessToken}`,
+      },
+      body: JSON.stringify({
+        trendPreferences: {
+          metrics: state.trendPreferences.metrics || [],
+        },
+      }),
+    });
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data?.error || "Failed to update trends");
+    state.auth.user = data.user;
+    hydrateTrendPreferences();
+    state.trendPreferences.open = false;
+    showToast("Trends updated");
+    fetchTrendsData();
+  } catch (err) {
+    state.trendPreferences.error = err.message;
+  } finally {
+    state.trendPreferences.saving = false;
     render();
   }
 }

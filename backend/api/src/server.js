@@ -128,6 +128,18 @@ const emptyNutrients = {
 };
 
 const nutrientKeys = Object.keys(emptyNutrients);
+const trendMetricKeys = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "consistency"];
+const defaultTrendMetrics = ["calories", "protein", "consistency"];
+const trendMetricConfig = {
+  calories: { label: "Calories", unit: "kcal", nutrientKey: "calories" },
+  protein: { label: "Protein", unit: "g", nutrientKey: "protein_g" },
+  carbs: { label: "Carbs", unit: "g", nutrientKey: "carbs_g" },
+  fat: { label: "Fat", unit: "g", nutrientKey: "fat_g" },
+  fiber: { label: "Fiber", unit: "g", nutrientKey: "fiber_g" },
+  sugar: { label: "Sugar", unit: "g", nutrientKey: "sugars_g" },
+  sodium: { label: "Sodium", unit: "mg", nutrientKey: "sodium_mg" },
+  consistency: { label: "Consistency", unit: "days", nutrientKey: null },
+};
 
 function normalizeNutrients(values = {}) {
   const normalized = {};
@@ -136,6 +148,58 @@ function normalizeNutrients(values = {}) {
     normalized[key] = Number.isFinite(n) ? n : 0;
   }
   return normalized;
+}
+
+function normalizeTrendPreferences(preferences) {
+  if (!preferences || !Array.isArray(preferences.metrics)) return undefined;
+  const metrics = Array.from(new Set(preferences.metrics)).filter((metric) => trendMetricKeys.includes(metric));
+  return { metrics: metrics.slice(0, 3) };
+}
+
+function buildTrendsPrompt(metricsStats) {
+  const metricsList = metricsStats.map((metric) => metric.label).join("\n");
+  const dataBlocks = metricsStats
+    .map(
+      (metric) =>
+        `${metric.label}:\n  Last 7 days avg: ${metric.last7Avg.toFixed(1)} ${metric.unit}\n  Previous 7 days avg: ${metric.prev7Avg.toFixed(1)} ${metric.unit}`
+    )
+    .join("\n\n");
+  return `Summarize nutrition trends for the selected metrics.
+
+Rules:
+- Max 1 sentence per metric
+- Plain, conversational language
+- No advice or recommendations
+- Describe direction only (up, down, about the same)
+
+Metrics to summarize:
+${metricsList}
+
+Data:
+${dataBlocks}
+
+End with:
+"Trends are based on logged meals."`;
+}
+
+function getTrendDirection(lastAvg, prevAvg) {
+  if (!prevAvg && !lastAvg) return "about the same";
+  if (!prevAvg && lastAvg) return "higher";
+  const delta = lastAvg - prevAvg;
+  const changeRatio = Math.abs(delta) / Math.max(prevAvg, 1);
+  if (changeRatio < 0.05) return "about the same";
+  return delta > 0 ? "higher" : "lower";
+}
+
+function buildTrendSummaryText(metricsStats) {
+  const lines = metricsStats.map((metric) => {
+    const direction = getTrendDirection(metric.last7Avg, metric.prev7Avg);
+    if (metric.key === "consistency") {
+      return `Logging consistency was ${direction} than the previous week.`;
+    }
+    return `Average ${metric.label.toLowerCase()} was ${direction} than the previous week.`;
+  });
+  return `${lines.join(" ")} Trends are based on logged meals.`;
 }
 
 function scaleNutrients(nutrients, factor = 1) {
@@ -162,15 +226,50 @@ function formatMacroSummary({ calories, protein_g, carbs_g, fat_g }) {
   return `${Math.round(calories)} kcal, P ${Math.round(protein_g)}g, C ${Math.round(carbs_g)}g, F ${Math.round(fat_g)}g`;
 }
 
-function buildTodaySummaryText(mealCount, totals) {
-  if (!mealCount) return "No meals logged yet today.";
-  return `Today you logged ${mealCount} meal${mealCount === 1 ? "" : "s"} totaling ${formatMacroSummary(totals)}.`;
+function normalizeSummaryTotals(totals = {}) {
+  const rounded = {};
+  for (const key of nutrientKeys) {
+    rounded[key] = Math.round(totals[key] || 0);
+  }
+  return rounded;
 }
 
-function buildWeekSummaryText(dayCount, mealCount, totals, avgCalories) {
-  if (!mealCount) return "No meals logged in the last 7 days.";
-  const dayLine = dayCount ? `${dayCount} day${dayCount === 1 ? "" : "s"} logged` : "no days logged";
-  return `Last 7 days: ${dayLine}, ${mealCount} meal${mealCount === 1 ? "" : "s"} and ${formatMacroSummary(totals)} (avg ${Math.round(avgCalories)} kcal/day).`;
+function buildNutritionSummaryText(rangeLabel, totals) {
+  const t = normalizeSummaryTotals(totals);
+  const prefix = rangeLabel ? `${rangeLabel}: ` : "";
+  return `${prefix}${t.calories} kcal with macros P ${t.protein_g}g, C ${t.carbs_g}g, F ${t.fat_g}g, plus fiber ${t.fiber_g}g, sugar ${t.sugars_g}g, sodium ${t.sodium_mg} mg, potassium ${t.potassium_mg} mg, calcium ${t.calcium_mg} mg, iron ${t.iron_mg} mg, vitamin D ${t.vitamin_d_mcg} mcg. This summary is based on logged meals and values are approximate.`;
+}
+
+function buildSummaryPrompt(rangeLabel, totals, mealsLogged = 0) {
+  const t = normalizeSummaryTotals(totals);
+  const lowDensity = mealsLogged < 2 || t.calories < 300;
+  return `You are summarizing nutrition data for ${rangeLabel}.
+
+Rules:
+- Keep it short (2–3 sentences)
+- Be neutral and factual
+- No advice, coaching, or recommendations
+- No goals or judgments
+- Assume estimates may be imperfect
+- Friendly, conversational tone
+${lowDensity ? "- Note: Data is limited. Phrase the summary carefully and avoid strong conclusions. Use language like \"so far\" or \"based on what's logged\"." : ""}
+
+Context:
+${rangeLabel} nutrition totals:
+Calories: ${t.calories} kcal
+Protein: ${t.protein_g} g
+Carbs: ${t.carbs_g} g
+Fat: ${t.fat_g} g
+Fiber: ${t.fiber_g} g
+Sugar: ${t.sugars_g} g
+Sodium: ${t.sodium_mg} mg
+Potassium: ${t.potassium_mg} mg
+Calcium: ${t.calcium_mg} mg
+Iron: ${t.iron_mg} mg
+Vitamin D: ${t.vitamin_d_mcg} mcg
+
+End with:
+"This summary is based on logged meals and values are approximate."`;
 }
 
 async function generateGroqSummary(prompt) {
@@ -224,14 +323,28 @@ function summaryBodyIncludesFacts(body, facts) {
   if (!body) return false;
   const normalized = body.replace(/,/g, "");
   const required = [
-    `${facts.daysLogged} of ${facts.daysInRange}`,
-    String(facts.totalCalories),
-    String(facts.avgCaloriesPerDay),
-    String(facts.totalProteinG),
-    String(facts.totalCarbsG),
-    String(facts.totalFatG),
+    String(facts.calories),
+    String(facts.protein_g),
+    String(facts.carbs_g),
+    String(facts.fat_g),
   ];
-  return required.every((part) => normalized.includes(normalizeDigits(part)));
+  if (!required.every((part) => normalized.includes(normalizeDigits(part)))) {
+    return false;
+  }
+  const secondary = [
+    facts.fiber_g,
+    facts.sugars_g,
+    facts.sodium_mg,
+    facts.potassium_mg,
+    facts.calcium_mg,
+    facts.iron_mg,
+    facts.vitamin_d_mcg,
+  ];
+  const nonZeroSecondary = secondary.filter((val) => Number(val) > 0);
+  const hasSecondary = nonZeroSecondary.length
+    ? nonZeroSecondary.some((val) => normalized.includes(normalizeDigits(String(val))))
+    : true;
+  return hasSecondary && normalized.toLowerCase().includes("approximate");
 }
 
 async function sendResetEmail(email, token) {
@@ -536,6 +649,7 @@ app.get("/api/profile", authMiddleware, async (req, res) => {
       weightKg: true,
       weightUnit: true,
       mfaEnabled: true,
+      trendPreferences: true,
     },
   });
   if (!user) return res.status(404).json({ error: "not_found" });
@@ -546,20 +660,33 @@ app.get("/api/profile", authMiddleware, async (req, res) => {
 });
 
 app.put("/api/profile", authMiddleware, async (req, res) => {
-  const { firstName, lastName, heightUnit, weightUnit, heightValue, heightFeet, heightInches, weightValue } = req.body || {};
-  const parsedHeight = normalizeHeight({ heightUnit, heightValue, heightFeet, heightInches });
-  const parsedWeight = normalizeWeight({ weightUnit, weightValue });
+  const { firstName, lastName, heightUnit, weightUnit, heightValue, heightFeet, heightInches, weightValue, trendPreferences } = req.body || {};
+  const hasHeightFields =
+    [heightUnit, heightValue, heightFeet, heightInches].some((val) => val !== undefined);
+  const hasWeightFields = [weightUnit, weightValue].some((val) => val !== undefined);
+  const parsedHeight = hasHeightFields ? normalizeHeight({ heightUnit, heightValue, heightFeet, heightInches }) : undefined;
+  const parsedWeight = hasWeightFields ? normalizeWeight({ weightUnit, weightValue }) : undefined;
+  const hasTrendPreferences = Object.prototype.hasOwnProperty.call(req.body || {}, "trendPreferences");
+  const normalizedTrendPreferences = trendPreferences === null ? null : normalizeTrendPreferences(trendPreferences);
   try {
+    const data = {
+      firstName,
+      lastName,
+    };
+    if (hasHeightFields) {
+      data.heightCm = parsedHeight;
+      data.heightUnit = heightUnit;
+    }
+    if (hasWeightFields) {
+      data.weightKg = parsedWeight;
+      data.weightUnit = weightUnit;
+    }
+    if (hasTrendPreferences) {
+      data.trendPreferences = normalizedTrendPreferences;
+    }
     const user = await prisma.user.update({
       where: { id: req.user.userId },
-      data: {
-        firstName,
-        lastName,
-        heightCm: parsedHeight,
-        heightUnit,
-        weightKg: parsedWeight,
-        weightUnit,
-      },
+      data,
       select: {
         id: true,
         email: true,
@@ -570,6 +697,7 @@ app.put("/api/profile", authMiddleware, async (req, res) => {
         weightKg: true,
         weightUnit: true,
         mfaEnabled: true,
+        trendPreferences: true,
       },
     });
     res.json({ user });
@@ -602,6 +730,7 @@ app.post("/auth/register", authLimiter, async (req, res) => {
       heightUnit,
       weightKg: parsedWeight,
       weightUnit,
+      trendPreferences: null,
     },
   });
   const tokens = signTokens(user);
@@ -614,6 +743,7 @@ app.post("/auth/register", authLimiter, async (req, res) => {
       heightCm: user.heightCm,
       weightKg: user.weightKg,
       mfaEnabled: user.mfaEnabled,
+      trendPreferences: user.trendPreferences,
     },
     ...tokens,
   });
@@ -664,6 +794,7 @@ app.post("/auth/login", authLimiter, async (req, res) => {
       weightKg: user.weightKg,
       weightUnit: user.weightUnit,
       mfaEnabled: user.mfaEnabled,
+      trendPreferences: user.trendPreferences,
     },
     deviceToken: issuedDeviceToken || deviceToken || null,
     ...tokens,
@@ -1400,30 +1531,10 @@ app.get("/api/summary", authMiddleware, async (req, res) => {
         { ...emptyNutrients }
       );
       const mealCount = mealsForDay.length;
+      const summaryTotals = normalizeSummaryTotals(totals);
       const summaryKey = hashPayload({
         dateStr,
-        meals: mealsForDay.map((meal) => ({
-          id: meal.id,
-          consumedAt: meal.consumedAt.toISOString(),
-          text: meal.text,
-          items: meal.items.map((item) => ({
-            id: item.id,
-            calories: item.calories,
-            protein_g: item.protein_g,
-            carbs_g: item.carbs_g,
-            fat_g: item.fat_g,
-            fiber_g: item.fiber_g,
-            sugars_g: item.sugars_g,
-            saturated_fat_g: item.saturated_fat_g,
-            trans_fat_g: item.trans_fat_g,
-            cholesterol_mg: item.cholesterol_mg,
-            sodium_mg: item.sodium_mg,
-            vitamin_d_mcg: item.vitamin_d_mcg,
-            calcium_mg: item.calcium_mg,
-            iron_mg: item.iron_mg,
-            potassium_mg: item.potassium_mg,
-          })),
-        })),
+        nutrientTotalsHash: hashPayload(summaryTotals),
       });
 
       const cached = await prisma.summary.findFirst({
@@ -1441,53 +1552,14 @@ app.get("/api/summary", authMiddleware, async (req, res) => {
         });
       }
 
-      const baseline = buildTodaySummaryText(mealCount, totals);
+      const baseline = buildNutritionSummaryText("Today", summaryTotals);
       let text = baseline;
       let model = null;
-      let aiSummary = null;
       if (useGroq && !SKIP_LLM) {
-        const summaryFacts = {
-          rangeLabel: "Today",
-          daysInRange: 1,
-          daysLogged: mealCount ? 1 : 0,
-          mealsLogged: mealCount,
-          totalCalories: Math.round(totals.calories || 0),
-          avgCaloriesPerDay: Math.round(totals.calories || 0),
-          totalProteinG: Math.round(totals.protein_g || 0),
-          totalCarbsG: Math.round(totals.carbs_g || 0),
-          totalFatG: Math.round(totals.fat_g || 0),
-        };
-        const prompt = `You are writing a brief daily food log summary for a nutrition tracking app.
-You MUST use the provided facts exactly. Do not change or recalculate numbers.
-Do not add advice, warnings, recommendations, or moral judgment.
-Do not mention “AI”, “LLM”, “Groq”, “model”, or “cached”.
-Keep it friendly, simple, and neutral.
-
-Write a daily summary in a conversational tone using ONLY these facts.
-
-Facts (JSON):
-${JSON.stringify(summaryFacts)}
-
-Requirements:
-- 2 to 4 short sentences total.
-- Mention daysLogged out of daysInRange.
-- Mention totalCalories and avgCaloriesPerDay.
-- Mention macros as “Protein/Carbs/Fat”.
-- Avoid bullet points.
-- Avoid exclamation overload (max one “!”).
-- Avoid medical claims.
-
-Return STRICT JSON with this shape:
-{
-  "title": "Today",
-  "body": "string",
-  "highlights": ["string", "string"]
-}`;
+        const prompt = buildSummaryPrompt("Today", summaryTotals, mealCount);
         const aiText = await generateGroqSummary(prompt);
-        const parsed = parseSummaryJson(aiText);
-        if (parsed && summaryBodyIncludesFacts(parsed.body, summaryFacts)) {
-          aiSummary = parsed;
-          text = parsed.body || baseline;
+        if (aiText && summaryBodyIncludesFacts(aiText, summaryTotals)) {
+          text = aiText.trim();
           model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
         }
       }
@@ -1505,7 +1577,6 @@ Return STRICT JSON with this shape:
       });
       return res.json({
         text,
-        aiSummary,
         summaryKey,
         generatedAt: created.createdAt.toISOString(),
         cached: false,
@@ -1560,19 +1631,15 @@ Return STRICT JSON with this shape:
       });
     }
 
-    const totals = daysList.reduce(
-      (acc, day) => ({
-        calories: acc.calories + (day.totals.calories || 0),
-        protein_g: acc.protein_g + (day.totals.protein_g || 0),
-        carbs_g: acc.carbs_g + (day.totals.carbs_g || 0),
-        fat_g: acc.fat_g + (day.totals.fat_g || 0),
-      }),
-      { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
-    );
-    const mealCount = daysList.reduce((acc, day) => acc + (day.meals || 0), 0);
-    const dayCount = daysList.filter((day) => day.meals > 0 || day.totals.calories > 0).length;
-    const avgCalories = totals.calories / Math.max(days, 1);
-    const summaryKey = hashPayload({ startStr, endStr, days: daysList });
+    const totals = dailyTotals.reduce((acc, day) => {
+      return accumulateNutrients(acc, normalizeNutrients(day));
+    }, { ...emptyNutrients });
+    const summaryTotals = normalizeSummaryTotals(totals);
+    const mealCount = mealsInRange.length;
+    const summaryKey = hashPayload({
+      dateStr: endStr,
+      nutrientTotalsHash: hashPayload(summaryTotals),
+    });
 
     const cached = await prisma.summary.findFirst({
       where: { userId, range, summaryKey },
@@ -1589,69 +1656,14 @@ Return STRICT JSON with this shape:
       });
     }
 
-    const baseline = buildWeekSummaryText(dayCount, mealCount, totals, avgCalories);
+    const baseline = buildNutritionSummaryText("Last 7 days", summaryTotals);
     let text = baseline;
     let model = null;
-    let aiSummary = null;
     if (useGroq && !SKIP_LLM) {
-      const highestDay = daysList.reduce((acc, day) => {
-        if (!acc || day.totals.calories > acc.calories) {
-          return { date: day.date, calories: Math.round(day.totals.calories || 0) };
-        }
-        return acc;
-      }, null);
-      const lowestDay = daysList.reduce((acc, day) => {
-        if (day.totals.calories <= 0) return acc;
-        if (!acc || day.totals.calories < acc.calories) {
-          return { date: day.date, calories: Math.round(day.totals.calories || 0) };
-        }
-        return acc;
-      }, null);
-      const summaryFacts = {
-        rangeLabel: `Last ${days} calendar days`,
-        daysInRange: days,
-        daysLogged: dayCount,
-        mealsLogged: mealCount,
-        totalCalories: Math.round(totals.calories || 0),
-        avgCaloriesPerDay: Math.round(avgCalories || 0),
-        totalProteinG: Math.round(totals.protein_g || 0),
-        totalCarbsG: Math.round(totals.carbs_g || 0),
-        totalFatG: Math.round(totals.fat_g || 0),
-        highestDay: highestDay?.calories ? highestDay : undefined,
-        lowestDay: lowestDay?.calories ? lowestDay : undefined,
-      };
-      const prompt = `You are writing a brief weekly food log summary for a nutrition tracking app.
-You MUST use the provided facts exactly. Do not change or recalculate numbers.
-Do not add advice, warnings, recommendations, or moral judgment.
-Do not mention “AI”, “LLM”, “Groq”, “model”, or “cached”.
-Keep it friendly, simple, and neutral.
-
-Write a weekly summary in a conversational tone using ONLY these facts.
-
-Facts (JSON):
-${JSON.stringify(summaryFacts)}
-
-Requirements:
-- 2 to 4 short sentences total.
-- Mention daysLogged out of daysInRange.
-- Mention totalCalories and avgCaloriesPerDay.
-- Mention macros as “Protein/Carbs/Fat”.
-- If highestDay and lowestDay exist, add 1 short sentence comparing them (optional).
-- Avoid bullet points.
-- Avoid exclamation overload (max one “!”).
-- Avoid medical claims.
-
-Return STRICT JSON with this shape:
-{
-  "title": "Last 7 days",
-  "body": "string",
-  "highlights": ["string", "string"]
-}`;
+      const prompt = buildSummaryPrompt("Last 7 days", summaryTotals, mealCount);
       const aiText = await generateGroqSummary(prompt);
-      const parsed = parseSummaryJson(aiText);
-      if (parsed && summaryBodyIncludesFacts(parsed.body, summaryFacts)) {
-        aiSummary = parsed;
-        text = parsed.body || baseline;
+      if (aiText && summaryBodyIncludesFacts(aiText, summaryTotals)) {
+        text = aiText.trim();
         model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
       }
     }
@@ -1669,7 +1681,6 @@ Return STRICT JSON with this shape:
     });
     return res.json({
       text,
-      aiSummary,
       summaryKey,
       generatedAt: created.createdAt.toISOString(),
       cached: false,
@@ -1677,6 +1688,137 @@ Return STRICT JSON with this shape:
   } catch (err) {
     console.error("summary_error", err);
     return res.status(500).json({ error: "summary_failed" });
+  }
+});
+
+app.get("/api/trends", authMiddleware, async (req, res) => {
+  const userId = req.user.userId;
+  const tzOffsetMinutes = Number(req.query.tzOffsetMinutes || 0);
+  const metricsParam = String(req.query.metrics || "");
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { trendPreferences: true },
+    });
+    const requestedMetrics = metricsParam
+      ? metricsParam.split(",").map((metric) => metric.trim()).filter(Boolean)
+      : user?.trendPreferences?.metrics || [];
+    const metrics = (requestedMetrics.length ? requestedMetrics : defaultTrendMetrics)
+      .filter((metric) => trendMetricKeys.includes(metric))
+      .slice(0, 3);
+
+    const endDate = new Date();
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 13);
+    const startStr = formatLocalYMD(startDate, tzOffsetMinutes);
+    const endStr = formatLocalYMD(endDate, tzOffsetMinutes);
+    const { startUtc } = computeLocalDayWindow(startStr, tzOffsetMinutes);
+    const { endUtc } = computeLocalDayWindow(endStr, tzOffsetMinutes);
+
+    const dayKeys = [];
+    for (let i = 0; i < 14; i += 1) {
+      const d = new Date(startDate);
+      d.setDate(startDate.getDate() + i);
+      dayKeys.push(formatLocalYMD(d, tzOffsetMinutes));
+    }
+    const buckets = new Map();
+    dayKeys.forEach((key) => {
+      buckets.set(key, { totals: { ...emptyNutrients }, meals: 0 });
+    });
+
+    const mealsInRange = await prisma.meal.findMany({
+      where: { userId, consumedAt: { gte: startUtc, lt: endUtc } },
+      include: { items: true },
+      orderBy: { consumedAt: "asc" },
+    });
+
+    mealsInRange.forEach((meal) => {
+      const key = formatLocalYMD(meal.consumedAt, tzOffsetMinutes);
+      const bucket = buckets.get(key);
+      if (!bucket) return;
+      bucket.meals += 1;
+      bucket.totals = meal.items.reduce((acc, item) => {
+        return accumulateNutrients(acc, {
+          calories: item.calories,
+          protein_g: item.protein_g,
+          carbs_g: item.carbs_g,
+          fat_g: item.fat_g,
+          fiber_g: item.fiber_g,
+          sugars_g: item.sugars_g,
+          sodium_mg: item.sodium_mg,
+          potassium_mg: item.potassium_mg,
+          calcium_mg: item.calcium_mg,
+          iron_mg: item.iron_mg,
+          vitamin_d_mcg: item.vitamin_d_mcg,
+          cholesterol_mg: item.cholesterol_mg,
+          saturated_fat_g: item.saturated_fat_g,
+          trans_fat_g: item.trans_fat_g,
+        });
+      }, bucket.totals);
+    });
+
+    const prevKeys = dayKeys.slice(0, 7);
+    const lastKeys = dayKeys.slice(7);
+    const countLoggedDays = (keys) =>
+      keys.filter((key) => {
+        const bucket = buckets.get(key);
+        return bucket?.meals || (bucket?.totals?.calories || 0) > 0;
+      }).length;
+    const lastLoggedDays = countLoggedDays(lastKeys);
+    const prevLoggedDays = countLoggedDays(prevKeys);
+
+    const metricsStats = metrics.map((metric) => {
+      const config = trendMetricConfig[metric];
+      if (!config) return null;
+      if (metric === "consistency") {
+        return {
+          key: metric,
+          label: config.label,
+          unit: config.unit,
+          last7Avg: lastLoggedDays,
+          prev7Avg: prevLoggedDays,
+          delta: lastLoggedDays - prevLoggedDays,
+        };
+      }
+      const sumForKeys = (keys) =>
+        keys.reduce((sum, key) => {
+          const bucket = buckets.get(key);
+          return sum + (bucket?.totals?.[config.nutrientKey] || 0);
+        }, 0);
+      const lastSum = sumForKeys(lastKeys);
+      const prevSum = sumForKeys(prevKeys);
+      const last7Avg = lastSum / 7;
+      const prev7Avg = prevSum / 7;
+      return {
+        key: metric,
+        label: config.label,
+        unit: config.unit,
+        last7Avg,
+        prev7Avg,
+        delta: last7Avg - prev7Avg,
+      };
+    }).filter(Boolean);
+
+    let summaryText = buildTrendSummaryText(metricsStats);
+    let model = null;
+    if (useGroq && !SKIP_LLM) {
+      const prompt = buildTrendsPrompt(metricsStats);
+      const aiText = await generateGroqSummary(prompt);
+      if (aiText && aiText.includes("Trends are based on logged meals")) {
+        summaryText = aiText.trim();
+        model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+      }
+    }
+
+    res.json({
+      metrics: metricsStats,
+      summaryText,
+      model,
+      range: { start: startStr, end: endStr },
+    });
+  } catch (err) {
+    console.error("trend_error", err);
+    res.status(500).json({ error: "trend_failed" });
   }
 });
 

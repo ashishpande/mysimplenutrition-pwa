@@ -85,3 +85,12 @@ export function fetchSummary(range, token, days = 7) {
     cache: "no-store",
   });
 }
+
+export function fetchTrends(metrics, token) {
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  const metricsParam = Array.isArray(metrics) && metrics.length ? `&metrics=${metrics.join(",")}` : "";
+  return fetch(`${API_BASE}/trends?tzOffsetMinutes=${tzOffsetMinutes}${metricsParam}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+}

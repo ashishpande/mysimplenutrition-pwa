@@ -72,6 +72,18 @@ export const state = {
     today: { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false },
     week: { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false },
   },
+  trends: {
+    status: "idle",
+    metrics: [],
+    summaryText: "",
+    range: null,
+  },
+  trendPreferences: {
+    metrics: [],
+    open: false,
+    saving: false,
+    error: null,
+  },
 };
 
 function isLikelyUsUser() {

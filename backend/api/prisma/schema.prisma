@@ -16,6 +16,7 @@ model User {
   heightUnit     String?
   weightKg       Float?
   weightUnit     String?
+  trendPreferences Json?
   passwordHash   String
   mfaEnabled     Boolean         @default(false)
   mfaSecret      String?

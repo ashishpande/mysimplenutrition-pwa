@@ -129,7 +129,9 @@ const emptyNutrients = {
 
 const nutrientKeys = Object.keys(emptyNutrients);
 const trendMetricKeys = ["calories", "protein", "carbs", "fat", "fiber", "sugar", "sodium", "consistency"];
+const trendPeriodOptions = ["7d", "30d", "90d", "1y"];
 const defaultTrendMetrics = ["calories", "protein", "consistency"];
+const defaultTrendPeriod = "7d";
 const trendMetricConfig = {
   calories: { label: "Calories", unit: "kcal", nutrientKey: "calories" },
   protein: { label: "Protein", unit: "g", nutrientKey: "protein_g" },
@@ -153,29 +155,56 @@ function normalizeNutrients(values = {}) {
 function normalizeTrendPreferences(preferences) {
   if (!preferences || !Array.isArray(preferences.metrics)) return undefined;
   const metrics = Array.from(new Set(preferences.metrics)).filter((metric) => trendMetricKeys.includes(metric));
-  return { metrics: metrics.slice(0, 3) };
+  const period = trendPeriodOptions.includes(preferences.period) ? preferences.period : defaultTrendPeriod;
+  return { metrics: metrics.slice(0, 3), period };
 }
 
-function buildTrendsPrompt(metricsStats) {
-  const metricsList = metricsStats.map((metric) => metric.label).join("\n");
+function getTrendPeriodDays(period) {
+  switch (period) {
+    case "30d":
+      return 30;
+    case "90d":
+      return 90;
+    case "1y":
+      return 365;
+    default:
+      return 7;
+  }
+}
+
+function getTrendPeriodLabel(period) {
+  switch (period) {
+    case "30d":
+      return "Last 30 days";
+    case "90d":
+      return "Last 90 days";
+    case "1y":
+      return "Last year";
+    default:
+      return "Last 7 days";
+  }
+}
+
+function buildTrendsPrompt(metricsStats, periodLabel) {
   const dataBlocks = metricsStats
     .map(
       (metric) =>
-        `${metric.label}:\n  Last 7 days avg: ${metric.last7Avg.toFixed(1)} ${metric.unit}\n  Previous 7 days avg: ${metric.prev7Avg.toFixed(1)} ${metric.unit}`
+        `${metric.label}:\n  Current avg: ${metric.last7Avg.toFixed(1)} ${metric.unit}\n  Previous avg: ${metric.prev7Avg.toFixed(1)} ${metric.unit}`
     )
     .join("\n\n");
-  return `Summarize nutrition trends for the selected metrics.
+  return `Summarize nutrition trends for the selected time range.
+
+Time range: ${periodLabel} (compared to previous equivalent period)
 
 Rules:
-- Max 1 sentence per metric
-- Plain, conversational language
-- No advice or recommendations
-- Describe direction only (up, down, about the same)
+- Use 1 sentence total
+- Mention only provided metrics
+- Use natural, conversational phrasing
+- No advice, recommendations, or goals
+- Neutral tone
+- Do not repeat "average" excessively
 
-Metrics to summarize:
-${metricsList}
-
-Data:
+Metrics:
 ${dataBlocks}
 
 End with:
@@ -191,15 +220,34 @@ function getTrendDirection(lastAvg, prevAvg) {
   return delta > 0 ? "higher" : "lower";
 }
 
-function buildTrendSummaryText(metricsStats) {
-  const lines = metricsStats.map((metric) => {
+function buildTrendSummaryText(metricsStats, periodLabel) {
+  const directionPhrase = (direction, metricKey) => {
+    if (metricKey === "consistency") {
+      if (direction === "higher") return "logging consistency increased";
+      if (direction === "lower") return "logging consistency decreased";
+      return "logging consistency stayed about the same";
+    }
+    if (direction === "higher") return "increased";
+    if (direction === "lower") return "decreased";
+    return "stayed about the same";
+  };
+  const leadInByPeriod = {
+    "Last 7 days": "Compared to the previous week,",
+    "Last 30 days": "Over the past 30 days,",
+    "Last 90 days": "Over the past 90 days,",
+    "Last year": "Over the past year,",
+  };
+  const leadIn = leadInByPeriod[periodLabel] || "Compared to the previous period,";
+  const phrases = metricsStats.map((metric) => {
     const direction = getTrendDirection(metric.last7Avg, metric.prev7Avg);
     if (metric.key === "consistency") {
-      return `Logging consistency was ${direction} than the previous week.`;
+      return directionPhrase(direction, metric.key);
     }
-    return `Average ${metric.label.toLowerCase()} was ${direction} than the previous week.`;
+    return `${metric.label.toLowerCase()} ${directionPhrase(direction, metric.key)}`;
   });
-  return `${lines.join(" ")} Trends are based on logged meals.`;
+  if (!phrases.length) return "Trends are based on logged meals.";
+  const joined = phrases.length === 1 ? phrases[0] : `${phrases.slice(0, -1).join(", ")} and ${phrases.slice(-1)}`;
+  return `${leadIn} ${joined}. Trends are based on logged meals.`;
 }
 
 function scaleNutrients(nutrients, factor = 1) {
@@ -1695,11 +1743,15 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
   const userId = req.user.userId;
   const tzOffsetMinutes = Number(req.query.tzOffsetMinutes || 0);
   const metricsParam = String(req.query.metrics || "");
+  const periodParam = String(req.query.period || "");
   try {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { trendPreferences: true },
     });
+    const period = trendPeriodOptions.includes(periodParam)
+      ? periodParam
+      : user?.trendPreferences?.period || defaultTrendPeriod;
     const requestedMetrics = metricsParam
       ? metricsParam.split(",").map((metric) => metric.trim()).filter(Boolean)
       : user?.trendPreferences?.metrics || [];
@@ -1707,16 +1759,17 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
       .filter((metric) => trendMetricKeys.includes(metric))
       .slice(0, 3);
 
+    const periodDays = getTrendPeriodDays(period);
     const endDate = new Date();
     const startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 13);
+    startDate.setDate(startDate.getDate() - (periodDays * 2 - 1));
     const startStr = formatLocalYMD(startDate, tzOffsetMinutes);
     const endStr = formatLocalYMD(endDate, tzOffsetMinutes);
     const { startUtc } = computeLocalDayWindow(startStr, tzOffsetMinutes);
     const { endUtc } = computeLocalDayWindow(endStr, tzOffsetMinutes);
 
     const dayKeys = [];
-    for (let i = 0; i < 14; i += 1) {
+    for (let i = 0; i < periodDays * 2; i += 1) {
       const d = new Date(startDate);
       d.setDate(startDate.getDate() + i);
       dayKeys.push(formatLocalYMD(d, tzOffsetMinutes));
@@ -1757,10 +1810,11 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
       }, bucket.totals);
     });
 
-    const prevKeys = dayKeys.slice(0, 7);
-    const lastKeys = dayKeys.slice(7);
+    const prevKeys = dayKeys.slice(0, periodDays);
+    const lastKeys = dayKeys.slice(periodDays);
+    const todayKey = formatLocalYMD(endDate, tzOffsetMinutes);
     const countLoggedDays = (keys) =>
-      keys.filter((key) => {
+      keys.filter((key) => key !== todayKey).filter((key) => {
         const bucket = buckets.get(key);
         return bucket?.meals || (bucket?.totals?.calories || 0) > 0;
       }).length;
@@ -1781,14 +1835,14 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
         };
       }
       const sumForKeys = (keys) =>
-        keys.reduce((sum, key) => {
+        keys.filter((key) => key !== todayKey).reduce((sum, key) => {
           const bucket = buckets.get(key);
           return sum + (bucket?.totals?.[config.nutrientKey] || 0);
         }, 0);
       const lastSum = sumForKeys(lastKeys);
       const prevSum = sumForKeys(prevKeys);
-      const last7Avg = lastSum / 7;
-      const prev7Avg = prevSum / 7;
+      const last7Avg = lastLoggedDays ? lastSum / lastLoggedDays : 0;
+      const prev7Avg = prevLoggedDays ? prevSum / prevLoggedDays : 0;
       return {
         key: metric,
         label: config.label,
@@ -1799,10 +1853,11 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
       };
     }).filter(Boolean);
 
-    let summaryText = buildTrendSummaryText(metricsStats);
+    const periodLabel = getTrendPeriodLabel(period);
+    let summaryText = buildTrendSummaryText(metricsStats, periodLabel);
     let model = null;
     if (useGroq && !SKIP_LLM) {
-      const prompt = buildTrendsPrompt(metricsStats);
+      const prompt = buildTrendsPrompt(metricsStats, periodLabel);
       const aiText = await generateGroqSummary(prompt);
       if (aiText && aiText.includes("Trends are based on logged meals")) {
         summaryText = aiText.trim();
@@ -1814,7 +1869,7 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
       metrics: metricsStats,
       summaryText,
       model,
-      range: { start: startStr, end: endStr },
+      range: { start: startStr, end: endStr, period, periodLabel },
     });
   } catch (err) {
     console.error("trend_error", err);

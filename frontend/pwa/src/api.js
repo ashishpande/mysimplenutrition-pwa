@@ -86,10 +86,11 @@ export function fetchSummary(range, token, days = 7) {
   });
 }
 
-export function fetchTrends(metrics, token) {
+export function fetchTrends(metrics, period, token) {
   const tzOffsetMinutes = new Date().getTimezoneOffset();
   const metricsParam = Array.isArray(metrics) && metrics.length ? `&metrics=${metrics.join(",")}` : "";
-  return fetch(`${API_BASE}/trends?tzOffsetMinutes=${tzOffsetMinutes}${metricsParam}`, {
+  const periodParam = period ? `&period=${period}` : "";
+  return fetch(`${API_BASE}/trends?tzOffsetMinutes=${tzOffsetMinutes}${metricsParam}${periodParam}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });

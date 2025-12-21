@@ -80,6 +80,7 @@ export const state = {
   },
   trendPreferences: {
     metrics: [],
+    period: "7d",
     open: false,
     saving: false,
     error: null,

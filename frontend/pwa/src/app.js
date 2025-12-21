@@ -14,6 +14,13 @@ const trendMetricOptions = [
   { key: "consistency", label: "Consistency", unit: "days" },
 ];
 const defaultTrendMetrics = ["calories", "protein", "consistency"];
+const trendPeriodOptions = [
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "90d", label: "Last 90 days" },
+  { value: "1y", label: "Last year" },
+];
+const defaultTrendPeriod = "7d";
 
 function getTrendPreferences() {
   const metrics = state.auth.user?.trendPreferences?.metrics;
@@ -21,9 +28,15 @@ function getTrendPreferences() {
   return defaultTrendMetrics;
 }
 
+function getTrendPeriod() {
+  const period = state.auth.user?.trendPreferences?.period;
+  return trendPeriodOptions.some((opt) => opt.value === period) ? period : defaultTrendPeriod;
+}
+
 function hydrateTrendPreferences() {
   const metrics = state.auth.user?.trendPreferences?.metrics;
   state.trendPreferences.metrics = Array.isArray(metrics) && metrics.length ? [...metrics] : [...defaultTrendMetrics];
+  state.trendPreferences.period = getTrendPeriod();
 }
 
 function getTrendOptionByKey(key) {
@@ -1161,7 +1174,20 @@ function renderApp() {
           <section class="card">
             <div class="trend-header">
               <h2>Recent trends</h2>
-              <button class="link-button small" id="trend-customize-toggle">Customize trends</button>
+              <div class="trend-controls">
+                <label class="trend-period">
+                  <span class="muted">Range</span>
+                  <select id="trend-period">
+                    ${trendPeriodOptions
+                      .map(
+                        (opt) =>
+                          `<option value="${opt.value}" ${state.trendPreferences.period === opt.value ? "selected" : ""}>${opt.label}</option>`
+                      )
+                      .join("")}
+                  </select>
+                </label>
+                <button class="link-button small" id="trend-customize-toggle">Customize trends</button>
+              </div>
             </div>
             ${state.trends.status === "loading" ? `<div class="muted">Loading trends...</div>` : ""}
             ${renderTrendMetrics(state.trends.metrics || [])}
@@ -1531,6 +1557,13 @@ function renderApp() {
         render();
       };
     }
+    const periodSelect = document.getElementById("trend-period");
+    if (periodSelect) {
+      periodSelect.onchange = (e) => {
+        state.trendPreferences.period = e.target.value;
+        updateTrendPreferences();
+      };
+    }
     document.querySelectorAll("[data-trend-metric]").forEach((input) => {
       input.onchange = (e) => toggleTrendMetricSelection(e.target.dataset.trendMetric, e.target.checked);
     });
@@ -1589,7 +1622,7 @@ function renderApp() {
       state.dayPanels = { nutrientsOpen: false, mealsOpen: false };
       state.historyRangeDays = 7;
       state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };
-      state.trendPreferences = { metrics: [...defaultTrendMetrics], open: false, saving: false, error: null };
+      state.trendPreferences = { metrics: [...defaultTrendMetrics], period: defaultTrendPeriod, open: false, saving: false, error: null };
       state.trends = { status: "idle", metrics: [], summaryText: "", range: null };
       render();
     };
@@ -2100,10 +2133,11 @@ async function fetchToday() {
 async function fetchTrendsData() {
   if (!state.auth.accessToken) return;
   const metrics = getTrendPreferences();
+  const period = state.trendPreferences.period || getTrendPeriod();
   state.trends.status = "loading";
   render();
   try {
-    const res = await fetchTrends(metrics, state.auth.accessToken);
+    const res = await fetchTrends(metrics, period, state.auth.accessToken);
     const data = await parseJsonSafe(res);
     if (!res.ok || !data) throw new Error(data?.error || "Failed to load trends");
     state.trends = {
@@ -2172,6 +2206,7 @@ async function updateTrendPreferences() {
       body: JSON.stringify({
         trendPreferences: {
           metrics: state.trendPreferences.metrics || [],
+          period: state.trendPreferences.period || defaultTrendPeriod,
         },
       }),
     });

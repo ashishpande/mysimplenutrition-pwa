@@ -581,6 +581,26 @@ function formatTrendValue(value, unit) {
   return `${formatNumber(value, 1)} ${unit}`;
 }
 
+function buildTrendExportText(trends) {
+  const periodLabel = trends.range?.periodLabel || "Recent trends";
+  const metrics = trends.metrics || [];
+  const lines = metrics.map((metric) => {
+    const value = formatNumber(metric.last7Avg, metric.unit === "kcal" || metric.unit === "mg" || metric.unit === "days" ? 0 : 1);
+    const suffix = metric.unit === "days" ? metric.unit : `${metric.unit}/day`;
+    return `- ${metric.label}: ${value} ${suffix}`;
+  });
+  const confidence = trends.confidence;
+  const confidenceLine = confidence && confidence.totalDays
+    ? `Based on ${confidence.daysWithMeals} of ${confidence.totalDays} days logged.`
+    : "";
+  const blocks = [
+    `${periodLabel}:`,
+    ...lines,
+    confidenceLine,
+  ].filter(Boolean);
+  return blocks.join("\n");
+}
+
 function renderTrendMetrics(metrics) {
   if (!metrics.length) {
     return `<div class="empty-state">
@@ -604,6 +624,32 @@ function renderTrendMetrics(metrics) {
       })
       .join("")}
   </div>`;
+}
+
+function renderTrendConfidence(confidence) {
+  if (!confidence || !confidence.totalDays) return "";
+  const ratio = confidence.totalDays ? confidence.daysWithMeals / confidence.totalDays : 0;
+  const weak = ratio < 0.5 ? "weak" : "";
+  return `<p class="trend-confidence muted small ${weak}">Based on ${confidence.daysWithMeals} of ${confidence.totalDays} days logged</p>`;
+}
+
+async function copyTrendSummary() {
+  const text = buildTrendExportText(state.trends);
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Summary copied");
+  } catch (_err) {
+    const temp = document.createElement("textarea");
+    temp.value = text;
+    temp.style.position = "fixed";
+    temp.style.top = "-1000px";
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand("copy");
+    document.body.removeChild(temp);
+    showToast("Summary copied");
+  }
 }
 
 function renderTrendPreferencesDrawer() {
@@ -1191,7 +1237,9 @@ function renderApp() {
             </div>
             ${state.trends.status === "loading" ? `<div class="muted">Loading trends...</div>` : ""}
             ${renderTrendMetrics(state.trends.metrics || [])}
-            ${state.trends.summaryText ? `<p class="trend-summary">${state.trends.summaryText}</p>` : ""}
+            ${state.trends.summaryText && state.trends.showTrends ? `<p class="trend-summary">${state.trends.summaryText}</p>` : ""}
+            ${state.trends.showTrends ? renderTrendConfidence(state.trends.confidence) : ""}
+            ${state.trends.showTrends && state.trends.metrics?.length ? `<button class="link-button small" id="trend-copy-summary" type="button">Copy summary</button>` : ""}
             ${renderTrendPreferencesDrawer()}
           </section>`
             : ""
@@ -1571,6 +1619,10 @@ function renderApp() {
     if (saveBtn) {
       saveBtn.onclick = () => updateTrendPreferences();
     }
+    const copyBtn = document.getElementById("trend-copy-summary");
+    if (copyBtn) {
+      copyBtn.onclick = () => copyTrendSummary();
+    }
   }
   if (tab === "profile") {
     document.getElementById("profile-first").oninput = (e) => (state.profileForm.firstName = e.target.value);
@@ -1623,7 +1675,7 @@ function renderApp() {
       state.historyRangeDays = 7;
       state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };
       state.trendPreferences = { metrics: [...defaultTrendMetrics], period: defaultTrendPeriod, open: false, saving: false, error: null };
-      state.trends = { status: "idle", metrics: [], summaryText: "", range: null };
+      state.trends = { status: "idle", metrics: [], summaryText: "", range: null, confidence: null, showTrends: true, dataHash: "" };
       render();
     };
   });
@@ -2145,10 +2197,15 @@ async function fetchTrendsData() {
       metrics: data.metrics || [],
       summaryText: data.summaryText || "",
       range: data.range || null,
+      confidence: data.confidence || null,
+      showTrends: data.showTrends !== false,
+      dataHash: data.dataHash || "",
     };
   } catch (err) {
     state.trends.status = "error";
     state.trends.summaryText = "Unable to load trends right now.";
+    state.trends.confidence = null;
+    state.trends.showTrends = false;
   } finally {
     render();
   }

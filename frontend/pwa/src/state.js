@@ -77,6 +77,9 @@ export const state = {
     metrics: [],
     summaryText: "",
     range: null,
+    confidence: null,
+    showTrends: true,
+    dataHash: "",
   },
   trendPreferences: {
     metrics: [],

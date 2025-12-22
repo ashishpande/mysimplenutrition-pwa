@@ -1123,6 +1123,14 @@ details[open] > summary .summary-caret {
   color: #0f172a;
 }
 
+.trend-confidence {
+  margin-top: 8px;
+}
+
+.trend-confidence.weak {
+  opacity: 0.6;
+}
+
 .trend-drawer {
   margin-top: 14px;
   padding: 12px;

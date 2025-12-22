@@ -132,6 +132,7 @@ const trendMetricKeys = ["calories", "protein", "carbs", "fat", "fiber", "sugar"
 const trendPeriodOptions = ["7d", "30d", "90d", "1y"];
 const defaultTrendMetrics = ["calories", "protein", "consistency"];
 const defaultTrendPeriod = "7d";
+const trendSummaryCache = new Map();
 const trendMetricConfig = {
   calories: { label: "Calories", unit: "kcal", nutrientKey: "calories" },
   protein: { label: "Protein", unit: "g", nutrientKey: "protein_g" },
@@ -1761,6 +1762,7 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
 
     const periodDays = getTrendPeriodDays(period);
     const endDate = new Date();
+    endDate.setDate(endDate.getDate() - 1);
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - (periodDays * 2 - 1));
     const startStr = formatLocalYMD(startDate, tzOffsetMinutes);
@@ -1812,14 +1814,30 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
 
     const prevKeys = dayKeys.slice(0, periodDays);
     const lastKeys = dayKeys.slice(periodDays);
-    const todayKey = formatLocalYMD(endDate, tzOffsetMinutes);
+    const todayKey = formatLocalYMD(new Date(), tzOffsetMinutes);
+    const lastKeysFiltered = lastKeys.filter((key) => key !== todayKey);
     const countLoggedDays = (keys) =>
       keys.filter((key) => key !== todayKey).filter((key) => {
         const bucket = buckets.get(key);
         return bucket?.meals || (bucket?.totals?.calories || 0) > 0;
       }).length;
-    const lastLoggedDays = countLoggedDays(lastKeys);
+    const lastLoggedDays = countLoggedDays(lastKeysFiltered);
     const prevLoggedDays = countLoggedDays(prevKeys);
+    const totalDays = lastKeysFiltered.length;
+    const dataHashPayload = lastKeysFiltered.map((key) => {
+      const bucket = buckets.get(key);
+      const totals = bucket?.totals || {};
+      return {
+        day: key,
+        meals: bucket?.meals || 0,
+        calories: totals.calories || 0,
+        protein_g: totals.protein_g || 0,
+        carbs_g: totals.carbs_g || 0,
+        fat_g: totals.fat_g || 0,
+      };
+    });
+    const dataHash = hashPayload(dataHashPayload);
+    const showTrends = lastLoggedDays >= 2;
 
     const metricsStats = metrics.map((metric) => {
       const config = trendMetricConfig[metric];
@@ -1839,7 +1857,7 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
           const bucket = buckets.get(key);
           return sum + (bucket?.totals?.[config.nutrientKey] || 0);
         }, 0);
-      const lastSum = sumForKeys(lastKeys);
+      const lastSum = sumForKeys(lastKeysFiltered);
       const prevSum = sumForKeys(prevKeys);
       const last7Avg = lastLoggedDays ? lastSum / lastLoggedDays : 0;
       const prev7Avg = prevLoggedDays ? prevSum / prevLoggedDays : 0;
@@ -1854,22 +1872,36 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
     }).filter(Boolean);
 
     const periodLabel = getTrendPeriodLabel(period);
-    let summaryText = buildTrendSummaryText(metricsStats, periodLabel);
+    let summaryText = "";
     let model = null;
-    if (useGroq && !SKIP_LLM) {
-      const prompt = buildTrendsPrompt(metricsStats, periodLabel);
-      const aiText = await generateGroqSummary(prompt);
-      if (aiText && aiText.includes("Trends are based on logged meals")) {
-        summaryText = aiText.trim();
-        model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+    if (showTrends && metricsStats.length) {
+      const cacheKey = hashPayload({ userId, period, metrics, dataHash });
+      const cached = trendSummaryCache.get(cacheKey);
+      if (cached?.summaryText) {
+        summaryText = cached.summaryText;
+        model = cached.model || null;
+      } else {
+        summaryText = buildTrendSummaryText(metricsStats, periodLabel);
+        if (useGroq && !SKIP_LLM) {
+          const prompt = buildTrendsPrompt(metricsStats, periodLabel);
+          const aiText = await generateGroqSummary(prompt);
+          if (aiText && aiText.includes("Trends are based on logged meals")) {
+            summaryText = aiText.trim();
+            model = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+          }
+        }
+        trendSummaryCache.set(cacheKey, { summaryText, model, dataHash, createdAt: new Date().toISOString() });
       }
     }
 
     res.json({
-      metrics: metricsStats,
+      metrics: showTrends ? metricsStats : [],
       summaryText,
       model,
       range: { start: startStr, end: endStr, period, periodLabel },
+      confidence: { daysWithMeals: lastLoggedDays, totalDays },
+      dataHash,
+      showTrends,
     });
   } catch (err) {
     console.error("trend_error", err);

@@ -125,6 +125,28 @@ export function consumeBarcode(barcode, token, mealType, tzOffsetMinutes) {
   });
 }
 
+export function saveBarcodeManual(payload, token) {
+  return fetch(`${API_BASE}/barcode/manual`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function skipBarcodeManual(payload, token) {
+  return fetch(`${API_BASE}/barcode/skip`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function postMetric(event, payload, token) {
   return fetch(`${API_BASE}/metrics`, {
     method: "POST",

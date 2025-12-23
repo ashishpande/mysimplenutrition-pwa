@@ -1,5 +1,5 @@
 import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits, safeStorageGet, safeStorageSet } from "./state.js";
-import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary, fetchTrends, fetchConfig, consumeBarcode, postMetric } from "./api.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary, fetchTrends, fetchConfig, consumeBarcode, saveBarcodeManual, skipBarcodeManual, postMetric } from "./api.js";
 import { formatWhen, buildConsumedAtFromInputs } from "./time.js";
 
 const appEl = document.getElementById("app");
@@ -645,8 +645,9 @@ function renderItemBadge(item) {
   if (item?.verified === true || source === "openfoodfacts" || source === "local") {
     return `<span class="badge verified" title="Verified from barcode data">Verified</span>`;
   }
-  if (item?.verified === false || source.includes("llm")) {
-    return `<span class="badge estimated" title="Estimated using AI">Estimated</span>`;
+  if (item?.verified === false || source.includes("llm") || source === "user_entered" || source === "unknown") {
+    const title = source === "unknown" ? "Unknown nutrition" : "Estimated using AI";
+    return `<span class="badge estimated" title="${title}">Estimated</span>`;
   }
   return "";
 }
@@ -688,6 +689,107 @@ function stopBarcodeScanner() {
   state.barcodeScanner.error = null;
 }
 
+function openBarcodeEntryModal(barcode) {
+  state.barcodeEntry = {
+    open: true,
+    barcode,
+    name: "",
+    servingSize: "100 g",
+    calories: "",
+    protein_g: "",
+    carbs_g: "",
+    fat_g: "",
+    fiber_g: "",
+    sugars_g: "",
+    sodium_mg: "",
+  };
+  render();
+  trackEvent("barcode_manual_entry_opened", { barcode });
+}
+
+function updateBarcodeEntryField(field, value) {
+  state.barcodeEntry = { ...state.barcodeEntry, [field]: value };
+}
+
+function normalizeBarcodeNutrients(entry) {
+  const num = (val) => {
+    const n = Number(val);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return {
+    calories: num(entry.calories),
+    protein_g: num(entry.protein_g),
+    carbs_g: num(entry.carbs_g),
+    fat_g: num(entry.fat_g),
+    fiber_g: num(entry.fiber_g),
+    sugars_g: num(entry.sugars_g),
+    sodium_mg: num(entry.sodium_mg),
+  };
+}
+
+async function submitManualBarcodeSave() {
+  const entry = state.barcodeEntry;
+  if (!entry.calories) return;
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  const nutrients = normalizeBarcodeNutrients(entry);
+  const payload = {
+    barcode: entry.barcode,
+    name: entry.name,
+    servingSize: entry.servingSize,
+    nutrients,
+    tzOffsetMinutes,
+  };
+  try {
+    const res = await saveBarcodeManual(payload, state.auth.accessToken);
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data?.error || "manual_save_failed");
+    state.barcodeEntry = { ...state.barcodeEntry, open: false };
+    state.result = data;
+    invalidateAllSummaries();
+    fetchToday();
+    fetchDays();
+    const filled = ["calories", "protein", "carbs", "fat"].filter((field) => {
+      if (field === "calories") return !!entry.calories;
+      if (field === "protein") return !!entry.protein_g;
+      if (field === "carbs") return !!entry.carbs_g;
+      if (field === "fat") return !!entry.fat_g;
+      return false;
+    });
+    trackEvent("barcode_manual_entry_saved", {
+      barcode: entry.barcode,
+      fields_filled: filled,
+      confidence: data?.barcode?.confidence ?? 0,
+    });
+    showToast("Barcode added");
+  } catch (_err) {
+    showToast("Could not save barcode");
+  }
+}
+
+async function submitManualBarcodeSkip() {
+  const entry = state.barcodeEntry;
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  const payload = {
+    barcode: entry.barcode,
+    name: entry.name,
+    tzOffsetMinutes,
+  };
+  try {
+    const res = await skipBarcodeManual(payload, state.auth.accessToken);
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data?.error || "manual_skip_failed");
+    state.barcodeEntry = { ...state.barcodeEntry, open: false };
+    state.result = data;
+    invalidateAllSummaries();
+    fetchToday();
+    fetchDays();
+    trackEvent("barcode_manual_entry_skipped", { barcode: entry.barcode });
+    showToast("Barcode added");
+  } catch (_err) {
+    showToast("Could not log barcode");
+  }
+}
+
 function openBarcodeOverlay({ autoStartCamera } = {}) {
   state.barcodeScanner.active = true;
   state.barcodeScanner.error = null;
@@ -715,12 +817,24 @@ async function handleBarcodeDetected(value) {
     const tzOffsetMinutes = new Date().getTimezoneOffset();
     const res = await consumeBarcode(value, state.auth.accessToken, "snack", tzOffsetMinutes);
     const data = await parseJsonSafe(res);
-    if (!res.ok) throw new Error(data?.error || "Barcode lookup failed");
+    if (!res.ok) {
+      if (data?.error === "barcode_not_found") {
+        trackEvent("barcode_scan_completed", { barcode: value, result: "not_found", source: "none" });
+        openBarcodeEntryModal(value);
+        return;
+      }
+      throw new Error(data?.error || "Barcode lookup failed");
+    }
     state.result = data;
     state.text = "";
     invalidateAllSummaries();
     fetchToday();
     fetchDays();
+    trackEvent("barcode_scan_completed", {
+      barcode: value,
+      result: "found",
+      source: data?.barcode?.source || "local",
+    });
     trackEvent("barcode_scan_success", { source: data?.barcode?.source, confidence: data?.barcode?.confidence || 0 });
     trackEvent("barcode_lookup_source", { source: data?.barcode?.source });
     trackEvent("barcode_lookup_time_ms", { ms: Date.now() - lookupStarted });
@@ -1506,6 +1620,68 @@ function renderApp() {
           ${state.barcodeScanner.error ? `<div class="error">${state.barcodeScanner.error}</div>` : ""}
         </div>
       </div>
+      ${
+        state.barcodeEntry.open
+          ? `
+          <div class="overlay">
+            <div class="modal-card">
+              <h3>Add product once</h3>
+              <p class="muted small">Provide nutrition for this barcode. Calories are required.</p>
+              <label class="field">
+                <span>Product name</span>
+                <input id="barcode-name" placeholder="Optional" value="${state.barcodeEntry.name || ""}" />
+              </label>
+              <label class="field">
+                <span>Serving size</span>
+                <input id="barcode-serving" value="${state.barcodeEntry.servingSize}" />
+              </label>
+              <label class="field">
+                <span>Calories (required)</span>
+                <input id="barcode-calories" type="number" inputmode="decimal" value="${state.barcodeEntry.calories}" />
+              </label>
+              <details class="details-card" open>
+                <summary>Macros (optional)</summary>
+                <div class="field-grid">
+                  <label class="field">
+                    <span>Protein (g)</span>
+                    <input id="barcode-protein" type="number" inputmode="decimal" value="${state.barcodeEntry.protein_g}" />
+                  </label>
+                  <label class="field">
+                    <span>Carbs (g)</span>
+                    <input id="barcode-carbs" type="number" inputmode="decimal" value="${state.barcodeEntry.carbs_g}" />
+                  </label>
+                  <label class="field">
+                    <span>Fat (g)</span>
+                    <input id="barcode-fat" type="number" inputmode="decimal" value="${state.barcodeEntry.fat_g}" />
+                  </label>
+                </div>
+              </details>
+              <details class="details-card">
+                <summary>More nutrition (optional)</summary>
+                <div class="field-grid">
+                  <label class="field">
+                    <span>Fiber (g)</span>
+                    <input id="barcode-fiber" type="number" inputmode="decimal" value="${state.barcodeEntry.fiber_g}" />
+                  </label>
+                  <label class="field">
+                    <span>Sugar (g)</span>
+                    <input id="barcode-sugars" type="number" inputmode="decimal" value="${state.barcodeEntry.sugars_g}" />
+                  </label>
+                  <label class="field">
+                    <span>Sodium (mg)</span>
+                    <input id="barcode-sodium" type="number" inputmode="decimal" value="${state.barcodeEntry.sodium_mg}" />
+                  </label>
+                </div>
+              </details>
+              <div class="modal-actions">
+                <button id="barcode-skip" class="ghost" type="button">Skip</button>
+                <button id="barcode-save" class="primary" type="button" ${state.barcodeEntry.calories ? "" : "disabled"}>Save</button>
+              </div>
+            </div>
+          </div>
+        `
+          : ""
+      }
       <nav class="mobile-nav">
         <button class="${tab === "today" ? "tab active" : "tab"}" data-tab="today">Today</button>
         <button class="${tab === "history" ? "tab active" : "tab"}" data-tab="history">History</button>
@@ -1913,6 +2089,33 @@ function renderApp() {
       }
     };
   }
+  const entryName = document.getElementById("barcode-name");
+  if (entryName) entryName.oninput = (e) => updateBarcodeEntryField("name", e.target.value);
+  const entryServing = document.getElementById("barcode-serving");
+  if (entryServing) entryServing.oninput = (e) => updateBarcodeEntryField("servingSize", e.target.value);
+  const entryCalories = document.getElementById("barcode-calories");
+  if (entryCalories) {
+    entryCalories.oninput = (e) => {
+      updateBarcodeEntryField("calories", e.target.value);
+      render();
+    };
+  }
+  const entryProtein = document.getElementById("barcode-protein");
+  if (entryProtein) entryProtein.oninput = (e) => updateBarcodeEntryField("protein_g", e.target.value);
+  const entryCarbs = document.getElementById("barcode-carbs");
+  if (entryCarbs) entryCarbs.oninput = (e) => updateBarcodeEntryField("carbs_g", e.target.value);
+  const entryFat = document.getElementById("barcode-fat");
+  if (entryFat) entryFat.oninput = (e) => updateBarcodeEntryField("fat_g", e.target.value);
+  const entryFiber = document.getElementById("barcode-fiber");
+  if (entryFiber) entryFiber.oninput = (e) => updateBarcodeEntryField("fiber_g", e.target.value);
+  const entrySugars = document.getElementById("barcode-sugars");
+  if (entrySugars) entrySugars.oninput = (e) => updateBarcodeEntryField("sugars_g", e.target.value);
+  const entrySodium = document.getElementById("barcode-sodium");
+  if (entrySodium) entrySodium.oninput = (e) => updateBarcodeEntryField("sodium_mg", e.target.value);
+  const entrySave = document.getElementById("barcode-save");
+  if (entrySave) entrySave.onclick = () => submitManualBarcodeSave();
+  const entrySkip = document.getElementById("barcode-skip");
+  if (entrySkip) entrySkip.onclick = () => submitManualBarcodeSkip();
   if (document.getElementById("dismiss-tutorial")) {
     document.getElementById("dismiss-tutorial").onclick = dismissTutorial;
   }

@@ -324,7 +324,7 @@ End with:
 
 function computeBarcodeConfidence(source) {
   if (source === "local") return 1.0;
-  if (source === "openfoodfacts") return 0.9;
+  if (source === "openfoodfacts") return 1.0;
   return 0.4;
 }
 
@@ -372,7 +372,19 @@ function parseServingSizeGrams(servingSize) {
   return value;
 }
 
-async function resolveBarcode(barcode) {
+function computeManualConfidence(nutrients = {}) {
+  let confidence = 0.4;
+  if (Number(nutrients.calories) > 0) confidence += 0.2;
+  if (Number(nutrients.protein_g) > 0 && Number(nutrients.carbs_g) > 0 && Number(nutrients.fat_g) > 0) {
+    confidence += 0.2;
+  }
+  if (Number(nutrients.fiber_g) > 0 || Number(nutrients.sodium_mg) > 0) {
+    confidence += 0.1;
+  }
+  return Math.min(confidence, 0.8);
+}
+
+async function resolveBarcode(barcode, { allowLlm = true } = {}) {
   const cached = await prisma.barcodeCache.findUnique({ where: { barcode } });
   if (cached) {
     return {
@@ -412,6 +424,9 @@ async function resolveBarcode(barcode) {
       },
     });
     return { ...normalized, confidence, source: "openfoodfacts" };
+  }
+  if (!allowLlm) {
+    return null;
   }
   const estimate = await estimateNutrition(`packaged food with barcode ${barcode}`);
   const normalized = normalizeNutrients(estimate);
@@ -915,7 +930,10 @@ app.post("/api/barcode/lookup", authMiddleware, async (req, res) => {
   if (!barcode) return res.status(400).json({ error: "barcode_required" });
   const startedAt = Date.now();
   try {
-    const result = await resolveBarcode(barcode);
+    const result = await resolveBarcode(barcode, { allowLlm: false });
+    if (!result) {
+      return res.status(404).json({ error: "barcode_not_found" });
+    }
     const lookupMs = Date.now() - startedAt;
     // eslint-disable-next-line no-console
     console.log("barcode_lookup_source", {
@@ -946,7 +964,10 @@ app.post("/api/barcode/consume", authMiddleware, async (req, res) => {
   const dateStr = formatLocalYMD(mealConsumedAt, tzOffsetMinutes);
 
   try {
-    const result = await resolveBarcode(barcode);
+    const result = await resolveBarcode(barcode, { allowLlm: false });
+    if (!result) {
+      return res.status(404).json({ error: "barcode_not_found" });
+    }
     const servingGrams = parseServingSizeGrams(result.servingSize) || 100;
     const nutrientFactor = servingGrams / 100;
     const nutrients = scaleNutrients(normalizeNutrients(result.nutrients), nutrientFactor);
@@ -1049,6 +1070,238 @@ app.post("/api/barcode/consume", authMiddleware, async (req, res) => {
   } catch (err) {
     console.error("barcode_consume_failed", err);
     return res.status(500).json({ error: "barcode_consume_failed" });
+  }
+});
+
+app.post("/api/barcode/manual", authMiddleware, async (req, res) => {
+  if (!BARCODE_SCANNING_ENABLED) {
+    return res.status(403).json({ error: "barcode_scanning_disabled" });
+  }
+  const { barcode, name = "", servingSize = "100 g", nutrients = {}, tzOffsetMinutes = 0 } = req.body || {};
+  if (!barcode) return res.status(400).json({ error: "barcode_required" });
+  if (!Number(nutrients?.calories)) return res.status(400).json({ error: "calories_required" });
+
+  const userId = req.user.userId;
+  const mealConsumedAt = new Date();
+  const dateStr = formatLocalYMD(mealConsumedAt, tzOffsetMinutes);
+  const normalized = normalizeNutrients(nutrients);
+  const confidence = computeManualConfidence(normalized);
+  const displayName = name || `Barcode ${barcode}`;
+
+  try {
+    await prisma.barcodeCache.upsert({
+      where: { barcode },
+      create: {
+        barcode,
+        name: displayName,
+        brand: "",
+        servingSize,
+        nutrients: normalized,
+        source: "user_entered",
+        verified: false,
+        confidence,
+      },
+      update: {
+        name: displayName,
+        brand: "",
+        servingSize,
+        nutrients: normalized,
+        source: "user_entered",
+        verified: false,
+        confidence,
+      },
+    });
+
+    const servingGrams = parseServingSizeGrams(servingSize) || 100;
+    const nutrientFactor = servingGrams / 100;
+    const scaled = scaleNutrients(normalized, nutrientFactor);
+    const mealTotals = accumulateNutrients({ ...emptyNutrients }, scaled);
+    const mealId = uuid();
+    let createdMeal = null;
+
+    await prisma.$transaction(async (tx) => {
+      const mealRecord = await tx.meal.create({
+        data: {
+          id: mealId,
+          userId,
+          mealType: "snack",
+          consumedAt: mealConsumedAt,
+          text: displayName,
+          items: {
+            create: [
+              {
+                id: uuid(),
+                foodId: `barcode-${barcode}`,
+                name: displayName,
+                quantity: 1,
+                unit: servingSize,
+                grams: servingGrams,
+                source: "user_entered",
+                calories: scaled.calories || 0,
+                protein_g: scaled.protein_g || 0,
+                carbs_g: scaled.carbs_g || 0,
+                fat_g: scaled.fat_g || 0,
+                fiber_g: scaled.fiber_g || 0,
+                sugars_g: scaled.sugars_g || 0,
+                saturated_fat_g: scaled.saturated_fat_g || 0,
+                trans_fat_g: scaled.trans_fat_g || 0,
+                cholesterol_mg: scaled.cholesterol_mg || 0,
+                sodium_mg: scaled.sodium_mg || 0,
+                vitamin_d_mcg: scaled.vitamin_d_mcg || 0,
+                calcium_mg: scaled.calcium_mg || 0,
+                iron_mg: scaled.iron_mg || 0,
+                potassium_mg: scaled.potassium_mg || 0,
+              },
+            ],
+          },
+        },
+        include: { items: true },
+      });
+
+      createdMeal = {
+        ...mealRecord,
+        items: mealRecord.items.map((i) => ({
+          ...i,
+          nutrients: normalizeNutrients({
+            calories: i.calories,
+            protein_g: i.protein_g,
+            carbs_g: i.carbs_g,
+            fat_g: i.fat_g,
+            fiber_g: i.fiber_g,
+            sugars_g: i.sugars_g,
+            saturated_fat_g: i.saturated_fat_g,
+            trans_fat_g: i.trans_fat_g,
+            cholesterol_mg: i.cholesterol_mg,
+            sodium_mg: i.sodium_mg,
+            vitamin_d_mcg: i.vitamin_d_mcg,
+            calcium_mg: i.calcium_mg,
+            iron_mg: i.iron_mg,
+            potassium_mg: i.potassium_mg,
+          }),
+        })),
+        total: mealTotals,
+      };
+
+      await tx.dailyTotal.upsert({
+        where: { userId_date: { userId, date: new Date(dateStr) } },
+        update: {
+          calories: { increment: mealTotals.calories },
+          protein_g: { increment: mealTotals.protein_g },
+          carbs_g: { increment: mealTotals.carbs_g },
+          fat_g: { increment: mealTotals.fat_g },
+        },
+        create: {
+          userId,
+          date: new Date(dateStr),
+          calories: mealTotals.calories,
+          protein_g: mealTotals.protein_g,
+          carbs_g: mealTotals.carbs_g,
+          fat_g: mealTotals.fat_g,
+        },
+      });
+    });
+
+    const dayTotals = await recomputeDayTotals(userId, dateStr, tzOffsetMinutes);
+    return res.json({
+      meal: { ...createdMeal, mealType: "snack", consumedAt: mealConsumedAt },
+      day: { userId, date: dateStr, ...dayTotals },
+      barcode: { source: "user_entered", confidence },
+      clampedFuture: false,
+    });
+  } catch (err) {
+    console.error("barcode_manual_failed", err);
+    return res.status(500).json({ error: "barcode_manual_failed" });
+  }
+});
+
+app.post("/api/barcode/skip", authMiddleware, async (req, res) => {
+  if (!BARCODE_SCANNING_ENABLED) {
+    return res.status(403).json({ error: "barcode_scanning_disabled" });
+  }
+  const { barcode, name = "", tzOffsetMinutes = 0 } = req.body || {};
+  if (!barcode) return res.status(400).json({ error: "barcode_required" });
+  const userId = req.user.userId;
+  const mealConsumedAt = new Date();
+  const dateStr = formatLocalYMD(mealConsumedAt, tzOffsetMinutes);
+  const displayName = name || `Barcode ${barcode}`;
+  const mealId = uuid();
+  let createdMeal = null;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const mealRecord = await tx.meal.create({
+        data: {
+          id: mealId,
+          userId,
+          mealType: "snack",
+          consumedAt: mealConsumedAt,
+          text: displayName,
+          items: {
+            create: [
+              {
+                id: uuid(),
+                foodId: `barcode-${barcode}`,
+                name: displayName,
+                quantity: 1,
+                unit: "serving",
+                grams: 0,
+                source: "unknown",
+                calories: 0,
+                protein_g: 0,
+                carbs_g: 0,
+                fat_g: 0,
+                fiber_g: 0,
+                sugars_g: 0,
+                saturated_fat_g: 0,
+                trans_fat_g: 0,
+                cholesterol_mg: 0,
+                sodium_mg: 0,
+                vitamin_d_mcg: 0,
+                calcium_mg: 0,
+                iron_mg: 0,
+                potassium_mg: 0,
+              },
+            ],
+          },
+        },
+        include: { items: true },
+      });
+
+      createdMeal = {
+        ...mealRecord,
+        items: mealRecord.items.map((i) => ({
+          ...i,
+          nutrients: normalizeNutrients({
+            calories: i.calories,
+            protein_g: i.protein_g,
+            carbs_g: i.carbs_g,
+            fat_g: i.fat_g,
+            fiber_g: i.fiber_g,
+            sugars_g: i.sugars_g,
+            saturated_fat_g: i.saturated_fat_g,
+            trans_fat_g: i.trans_fat_g,
+            cholesterol_mg: i.cholesterol_mg,
+            sodium_mg: i.sodium_mg,
+            vitamin_d_mcg: i.vitamin_d_mcg,
+            calcium_mg: i.calcium_mg,
+            iron_mg: i.iron_mg,
+            potassium_mg: i.potassium_mg,
+          }),
+        })),
+        total: { ...emptyNutrients },
+      };
+    });
+
+    const dayTotals = await recomputeDayTotals(userId, dateStr, tzOffsetMinutes);
+    return res.json({
+      meal: { ...createdMeal, mealType: "snack", consumedAt: mealConsumedAt },
+      day: { userId, date: dateStr, ...dayTotals },
+      barcode: { source: "unknown", confidence: 0 },
+      clampedFuture: false,
+    });
+  } catch (err) {
+    console.error("barcode_skip_failed", err);
+    return res.status(500).json({ error: "barcode_skip_failed" });
   }
 });
 

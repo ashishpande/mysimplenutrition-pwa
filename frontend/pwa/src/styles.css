@@ -195,7 +195,7 @@ main {
 
 .log-input {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto auto 1fr auto;
   gap: 10px;
   align-items: center;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.9));
@@ -212,6 +212,7 @@ main {
   font-size: 15px;
   width: 100%;
   color: #0f172a;
+  min-width: 0;
 }
 
 .log-field:focus {

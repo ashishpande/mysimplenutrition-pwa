@@ -1,8 +1,9 @@
-import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits } from "./state.js";
-import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary, fetchTrends } from "./api.js";
+import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits, safeStorageGet, safeStorageSet } from "./state.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary, fetchTrends, fetchConfig, consumeBarcode, postMetric } from "./api.js";
 import { formatWhen, buildConsumedAtFromInputs } from "./time.js";
 
 const appEl = document.getElementById("app");
+const isDesktop = !/Mobi|Android/i.test(navigator.userAgent);
 const trendMetricOptions = [
   { key: "calories", label: "Calories", unit: "kcal" },
   { key: "protein", label: "Protein", unit: "g" },
@@ -75,7 +76,7 @@ function showToast(message, type = "success") {
 
 function dismissTutorial() {
   state.showTutorial = false;
-  localStorage.setItem("tutorialSeen", "true");
+  safeStorageSet("tutorialSeen", "true");
   render();
 }
 
@@ -153,7 +154,7 @@ function renderTodaySection(result, today) {
             .map(
               (item) => `
             <li>
-              <div class="item-title">${item.name}</div>
+              <div class="item-title">${item.name} ${renderItemBadge(item)}</div>
               <div class="item-meta">${item.quantity} ${item.unit} (${Math.round(item.grams)}g)</div>
               ${state.editingItem?.itemId === item.id ? renderEditForm(mealToShow.id, item) : ""}
               <div class="macro">
@@ -633,6 +634,145 @@ function renderTrendConfidence(confidence) {
   return `<p class="trend-confidence muted small ${weak}">Based on ${confidence.daysWithMeals} of ${confidence.totalDays} days logged</p>`;
 }
 
+function renderItemBadge(item) {
+  const source = item?.source || "";
+  if (item?.verified === true || source === "openfoodfacts" || source === "local") {
+    return `<span class="badge verified" title="Verified from barcode data">Verified</span>`;
+  }
+  if (item?.verified === false || source.includes("llm")) {
+    return `<span class="badge estimated" title="Estimated using AI">Estimated</span>`;
+  }
+  return "";
+}
+
+async function trackEvent(event, payload = {}) {
+  if (!state.auth.accessToken) return;
+  try {
+    await postMetric(event, payload, state.auth.accessToken);
+  } catch (_err) {}
+}
+
+async function loadFeatureFlags() {
+  if (!state.auth.accessToken) return;
+  try {
+    const res = await fetchConfig(state.auth.accessToken);
+    const data = await parseJsonSafe(res);
+    if (res.ok && data?.features) {
+      state.features = { ...state.features, ...data.features };
+    } else {
+      state.features.barcode_scanning_enabled = false;
+    }
+  } catch (_err) {
+    state.features.barcode_scanning_enabled = false;
+  }
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("enableBarcode") === "1" || safeStorageGet("dev_enable_barcode", "") === "true") {
+    state.features.barcode_scanning_enabled = true;
+  }
+}
+
+function stopBarcodeScanner() {
+  if (window.Quagga) {
+    try {
+      window.Quagga.offDetected(onBarcodeDetected);
+      window.Quagga.stop();
+    } catch (_err) {}
+  }
+  state.barcodeScanner.active = false;
+  state.barcodeScanner.error = null;
+}
+
+function openBarcodeOverlay({ autoStartCamera } = {}) {
+  state.barcodeScanner.active = true;
+  state.barcodeScanner.error = null;
+  render();
+  trackEvent("barcode_scanner_opened", { device: isDesktop ? "desktop" : "mobile" });
+  if (autoStartCamera) {
+    startBarcodeScanner();
+  }
+}
+
+async function submitManualBarcode() {
+  const input = document.getElementById("manual-barcode");
+  const code = input?.value?.trim() || "";
+  if (!code || code.length < 8) return;
+  trackEvent("barcode_scanner_method_used", { method: "manual" });
+  await handleBarcodeDetected(code);
+  if (input) input.value = "";
+}
+
+async function handleBarcodeDetected(value) {
+  stopBarcodeScanner();
+  render();
+  try {
+    const lookupStarted = Date.now();
+    const tzOffsetMinutes = new Date().getTimezoneOffset();
+    const res = await consumeBarcode(value, state.auth.accessToken, "snack", tzOffsetMinutes);
+    const data = await parseJsonSafe(res);
+    if (!res.ok) throw new Error(data?.error || "Barcode lookup failed");
+    state.result = data;
+    state.text = "";
+    invalidateAllSummaries();
+    fetchToday();
+    fetchDays();
+    trackEvent("barcode_scan_success", { source: data?.barcode?.source, confidence: data?.barcode?.confidence || 0 });
+    trackEvent("barcode_lookup_source", { source: data?.barcode?.source });
+    trackEvent("barcode_lookup_time_ms", { ms: Date.now() - lookupStarted });
+    showToast("Barcode added");
+  } catch (_err) {
+    trackEvent("barcode_scan_failed", { reason: "lookup_failed" });
+    showToast("Barcode lookup unavailable");
+  }
+}
+
+async function onBarcodeDetected(result) {
+  const code = result?.codeResult?.code;
+  if (!code) return;
+  await handleBarcodeDetected(code);
+}
+
+async function startBarcodeScanner() {
+  if (state.barcodeScanner.active) return;
+  if (!window.Quagga) {
+    showToast("Barcode scanning not supported on this device");
+    return;
+  }
+  state.barcodeScanner.active = true;
+  state.barcodeScanner.error = null;
+  render();
+  const video = document.getElementById("barcode-video");
+  if (!video) return;
+  try {
+    trackEvent("barcode_scanner_method_used", { method: "camera" });
+    trackEvent("barcode_scan_started");
+    window.Quagga.init({
+      inputStream: {
+        type: "LiveStream",
+        target: video,
+        constraints: { facingMode: "environment" },
+      },
+      decoder: {
+        readers: ["ean_reader", "upc_reader", "upc_e_reader"],
+      },
+    }, (err) => {
+      if (err) {
+        state.barcodeScanner.error = "Camera access was blocked.";
+        trackEvent("barcode_scan_failed", { reason: "init_failed" });
+        stopBarcodeScanner();
+        render();
+        return;
+      }
+      window.Quagga.start();
+    });
+    window.Quagga.onDetected(onBarcodeDetected);
+  } catch (_err) {
+    stopBarcodeScanner();
+    state.barcodeScanner.error = "Camera access was blocked.";
+    trackEvent("barcode_scan_failed", { reason: "camera_blocked" });
+    render();
+  }
+}
+
 async function copyTrendSummary() {
   const text = buildTrendExportText(state.trends);
   if (!text) return;
@@ -1082,6 +1222,7 @@ function renderApp() {
             <h2>Log a meal</h2>
             <div class="log-input">
               <button id="voice-btn" class="icon-btn ghost-btn ${listening ? "active" : ""}" aria-pressed="${listening}" aria-label="Use microphone">🎤</button>
+              ${state.features.barcode_scanning_enabled ? `<button id="barcode-btn" class="icon-btn ghost-btn" aria-label="Scan barcode">📷</button>` : ""}
               <input id="text-input" class="log-field" placeholder="Type or say what you ate. We’ll estimate nutrition. (e.g., “2 eggs and toast”)" value="${text}" />
               <button id="submit-btn" class="primary log-btn" ${status === "loading" ? "disabled" : ""}>
                 ${status === "loading" ? `<span class="spinner" aria-hidden="true"></span> Logging...` : "Log"}
@@ -1159,7 +1300,7 @@ function renderApp() {
                                                 const n = item.nutrients || item;
                                                 return `
                                                   <li>
-                                                    <div class="item-title">${item.name || "Item"}</div>
+                                                    <div class="item-title">${item.name || "Item"} ${renderItemBadge(item)}</div>
                                                     <div class="macro small">
                                                       Calories: ${formatNumber(n.calories, 0)} kcal |
                                                       Protein: ${formatNumber(n.protein_g, 1)}g |
@@ -1327,6 +1468,27 @@ function renderApp() {
             : ""
         }
       </main>
+      <div id="barcode-overlay" class="overlay ${state.barcodeScanner.active ? "" : "hidden"}">
+        <div class="barcode-frame">
+          <div id="barcode-video" class="barcode-video"></div>
+          <p class="scanner-help">Hold a product barcode up to your camera, or enter it manually.</p>
+          ${isDesktop ? `
+            <div class="barcode-manual">
+              <input id="manual-barcode" placeholder="Enter barcode (UPC/EAN)" inputmode="numeric" />
+              <button class="primary" id="manual-barcode-submit" type="button">Lookup</button>
+            </div>
+            <div class="barcode-actions">
+              <button class="ghost" id="barcode-start-camera" type="button">Use camera</button>
+              <button class="ghost" id="barcode-cancel" type="button">Cancel</button>
+            </div>
+          ` : `
+            <div class="barcode-actions">
+              <button class="ghost" id="barcode-cancel" type="button">Cancel</button>
+            </div>
+          `}
+          ${state.barcodeScanner.error ? `<div class="error">${state.barcodeScanner.error}</div>` : ""}
+        </div>
+      </div>
       <nav class="mobile-nav">
         <button class="${tab === "today" ? "tab active" : "tab"}" data-tab="today">Today</button>
         <button class="${tab === "history" ? "tab active" : "tab"}" data-tab="history">History</button>
@@ -1338,6 +1500,12 @@ function renderApp() {
 
   if (tab === "today") {
     document.getElementById("voice-btn").onclick = toggleVoice;
+    if (state.features.barcode_scanning_enabled) {
+      const barcodeBtn = document.getElementById("barcode-btn");
+      if (barcodeBtn) {
+        barcodeBtn.onclick = () => openBarcodeOverlay({ autoStartCamera: !isDesktop });
+      }
+    }
     document.getElementById("submit-btn").onclick = submitText;
     const todaySummaryEl = document.getElementById("today-summary");
     if (todaySummaryEl) {
@@ -1537,6 +1705,7 @@ function renderApp() {
   document.querySelectorAll(".tabs button, .mobile-nav button").forEach((btn) => {
     btn.onclick = () => {
       stopListening("tab-switch");
+      stopBarcodeScanner();
       state.tab = btn.dataset.tab;
        // Avoid leaving the log button stuck in a loading state when switching tabs.
       state.status = "idle";
@@ -1652,6 +1821,7 @@ function renderApp() {
   document.querySelectorAll("[data-logout]").forEach((btn) => {
     btn.onclick = () => {
       stopListening("logout");
+      stopBarcodeScanner();
       state.auth = {
         mode: "login",
         email: "",
@@ -1665,7 +1835,7 @@ function renderApp() {
         accessToken: null,
         user: null,
         mfaRequired: false,
-        deviceToken: localStorage.getItem("mfaDeviceToken") || "",
+        deviceToken: safeStorageGet("mfaDeviceToken", ""),
         rememberDevice: true,
       };
       state.result = null;
@@ -1676,6 +1846,8 @@ function renderApp() {
       state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };
       state.trendPreferences = { metrics: [...defaultTrendMetrics], period: defaultTrendPeriod, open: false, saving: false, error: null };
       state.trends = { status: "idle", metrics: [], summaryText: "", range: null, confidence: null, showTrends: true, dataHash: "" };
+      state.features = { barcode_scanning_enabled: false };
+      state.barcodeScanner = { active: false, error: null };
       render();
     };
   });
@@ -1684,6 +1856,31 @@ function renderApp() {
   }
   if (document.getElementById("theme-btn")) {
     document.getElementById("theme-btn").onclick = toggleTheme;
+  }
+  const barcodeCancel = document.getElementById("barcode-cancel");
+  if (barcodeCancel) {
+    barcodeCancel.onclick = () => {
+      stopBarcodeScanner();
+      trackEvent("barcode_scan_failed", { reason: "user_cancel" });
+      render();
+    };
+  }
+  const barcodeStart = document.getElementById("barcode-start-camera");
+  if (barcodeStart) {
+    barcodeStart.onclick = () => startBarcodeScanner();
+  }
+  const manualSubmit = document.getElementById("manual-barcode-submit");
+  if (manualSubmit) {
+    manualSubmit.onclick = () => submitManualBarcode();
+  }
+  const manualInput = document.getElementById("manual-barcode");
+  if (manualInput) {
+    manualInput.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submitManualBarcode();
+      }
+    };
   }
   if (document.getElementById("dismiss-tutorial")) {
     document.getElementById("dismiss-tutorial").onclick = dismissTutorial;
@@ -1813,6 +2010,7 @@ async function submitAuth() {
     if (!res.ok) throw new Error(data?.error || "Auth failed");
     state.auth.accessToken = data.accessToken;
     state.auth.user = data.user;
+    await loadFeatureFlags();
     hydrateTrendPreferences();
     state.profileForm.firstName = data.user?.firstName || "";
     state.profileForm.lastName = data.user?.lastName || "";
@@ -1825,7 +2023,7 @@ async function submitAuth() {
       state.auth.weightKg = "";
     }
     if (data.deviceToken && rememberDevice) {
-      localStorage.setItem("mfaDeviceToken", data.deviceToken);
+      safeStorageSet("mfaDeviceToken", data.deviceToken);
       state.auth.deviceToken = data.deviceToken;
     }
     state.status = "idle";
@@ -2336,7 +2534,7 @@ function toggleTheme() {
   const order = ["auto", "light", "dark"];
   const next = order[(order.indexOf(state.theme) + 1) % order.length];
   state.theme = next;
-  localStorage.setItem("appTheme", next);
+  safeStorageSet("appTheme", next);
   applyTheme();
   render();
 }

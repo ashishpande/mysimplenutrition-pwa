@@ -14,8 +14,18 @@
     <script>
       // Set API_BASE here for local dev if needed.
       const host = window.location.hostname;
-      const isLocal = host === 'localhost' || host === '127.0.0.1';
-      window.API_BASE = window.API_BASE || (isLocal ? "http://localhost:4000/api" : "https://nutrition-api-spring-dust-1526.fly.dev/api");
+      const isLoopback = host === "localhost" || host === "127.0.0.1";
+      const isHttps = window.location.protocol === "https:";
+      const isPrivateHost =
+        isLoopback ||
+        host.endsWith(".local") ||
+        /^10\\./.test(host) ||
+        /^192\\.168\\./.test(host) ||
+        /^172\\.(1[6-9]|2\\d|3[0-1])\\./.test(host);
+      const localApi = isLoopback && !isHttps ? "http://localhost:4000/api" : `${window.location.origin}/api`;
+      const flyApi = "https://nutrition-api-spring-dust-1526.fly.dev/api";
+      const defaultApi = isPrivateHost ? localApi : flyApi;
+      window.API_BASE = window.API_BASE || defaultApi;
     </script>
     <style>
       /* Ensure auth submit button stays visible in dark mode */
@@ -29,6 +39,7 @@
   </head>
   <body>
     <div id="app"></div>
+    <script src="https://unpkg.com/@ericblade/quagga2/dist/quagga.js"></script>
     <script type="module" src="./src/app.js"></script>
     <script>
       if ("serviceWorker" in navigator) {

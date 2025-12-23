@@ -16,6 +16,8 @@ build/
 .env.*
 .secrets.sh
 deploy.sh
+certs/
+*.db
 
 # Local admin/test dashboards
 admin/

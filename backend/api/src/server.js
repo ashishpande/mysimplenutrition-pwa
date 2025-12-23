@@ -39,6 +39,7 @@ const FORCE_LLM = process.env.FORCE_LLM === "true" || env !== "production";
 const useGroq = !!process.env.GROQ_API_KEY;
 const hasOllama = !!process.env.OLLAMA_HOST;
 const SKIP_LLM = process.env.SKIP_LLM === "true";
+const BARCODE_SCANNING_ENABLED = process.env.BARCODE_SCANNING_ENABLED === "true";
 const estimateNutrition = async (name) => {
   if (hasOllama) {
     try {
@@ -319,6 +320,134 @@ Vitamin D: ${t.vitamin_d_mcg} mcg
 
 End with:
 "This summary is based on logged meals and values are approximate."`;
+}
+
+function computeBarcodeConfidence(source) {
+  if (source === "local") return 1.0;
+  if (source === "openfoodfacts") return 0.9;
+  return 0.4;
+}
+
+async function lookupOpenFoodFacts(barcode) {
+  const url = `https://world.openfoodfacts.org/api/v0/product/${barcode}.json`;
+  const resp = await fetch(url);
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data.status === 1 ? data.product : null;
+}
+
+function normalizeOpenFoodFacts(product) {
+  const n = product?.nutriments || {};
+  return {
+    name: product.product_name || "Packaged food",
+    brand: product.brands || "",
+    servingSize: product.serving_size || "100g",
+    nutrients: {
+      calories: n["energy-kcal_100g"] || 0,
+      protein_g: n["proteins_100g"] || 0,
+      carbs_g: n["carbohydrates_100g"] || 0,
+      fat_g: n["fat_100g"] || 0,
+      fiber_g: n["fiber_100g"] || 0,
+      sugars_g: n["sugars_100g"] || 0,
+      sodium_mg: (n["sodium_100g"] || 0) * 1000,
+      potassium_mg: (n["potassium_100g"] || 0) * 1000,
+      calcium_mg: (n["calcium_100g"] || 0) * 1000,
+      iron_mg: (n["iron_100g"] || 0) * 1000,
+      vitamin_d_mcg: n["vitamin-d_100g"] || 0,
+      cholesterol_mg: (n["cholesterol_100g"] || 0) * 1000,
+      saturated_fat_g: n["saturated-fat_100g"] || 0,
+      trans_fat_g: n["trans-fat_100g"] || 0,
+    },
+    source: "openfoodfacts",
+    verified: true,
+  };
+}
+
+function parseServingSizeGrams(servingSize) {
+  if (!servingSize || typeof servingSize !== "string") return null;
+  const match = servingSize.match(/(\d+(?:\.\d+)?)\s*(g|ml)\b/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  return value;
+}
+
+async function resolveBarcode(barcode) {
+  const cached = await prisma.barcodeCache.findUnique({ where: { barcode } });
+  if (cached) {
+    return {
+      name: cached.name,
+      brand: cached.brand || "",
+      servingSize: cached.servingSize || "100g",
+      nutrients: cached.nutrients || {},
+      source: "local",
+      verified: cached.verified,
+      confidence: computeBarcodeConfidence("local"),
+    };
+  }
+  const product = await lookupOpenFoodFacts(barcode);
+  if (product) {
+    const normalized = normalizeOpenFoodFacts(product);
+    const confidence = computeBarcodeConfidence("openfoodfacts");
+    await prisma.barcodeCache.upsert({
+      where: { barcode },
+      create: {
+        barcode,
+        name: normalized.name,
+        brand: normalized.brand || "",
+        servingSize: normalized.servingSize || "100g",
+        nutrients: normalized.nutrients,
+        source: "openfoodfacts",
+        verified: true,
+        confidence,
+      },
+      update: {
+        name: normalized.name,
+        brand: normalized.brand || "",
+        servingSize: normalized.servingSize || "100g",
+        nutrients: normalized.nutrients,
+        source: "openfoodfacts",
+        verified: true,
+        confidence,
+      },
+    });
+    return { ...normalized, confidence, source: "openfoodfacts" };
+  }
+  const estimate = await estimateNutrition(`packaged food with barcode ${barcode}`);
+  const normalized = normalizeNutrients(estimate);
+  const confidence = computeBarcodeConfidence("llm");
+  const fallback = {
+    name: `Barcode ${barcode}`,
+    brand: "",
+    servingSize: "100g",
+    nutrients: normalized,
+    source: "llm",
+    verified: false,
+    confidence,
+  };
+  await prisma.barcodeCache.upsert({
+    where: { barcode },
+    create: {
+      barcode,
+      name: fallback.name,
+      brand: "",
+      servingSize: "100g",
+      nutrients: fallback.nutrients,
+      source: "llm",
+      verified: false,
+      confidence,
+    },
+    update: {
+      name: fallback.name,
+      brand: "",
+      servingSize: "100g",
+      nutrients: fallback.nutrients,
+      source: "llm",
+      verified: false,
+      confidence,
+    },
+  });
+  return fallback;
 }
 
 async function generateGroqSummary(prompt) {
@@ -684,6 +813,27 @@ app.get("/api/health/llm", async (_req, res) => {
   }
 });
 
+app.get("/api/config", authMiddleware, async (_req, res) => {
+  res.json({
+    features: {
+      barcode_scanning_enabled: BARCODE_SCANNING_ENABLED,
+    },
+  });
+});
+
+app.post("/api/metrics", authMiddleware, async (req, res) => {
+  const { event, payload } = req.body || {};
+  if (!event) return res.status(400).json({ error: "event_required" });
+  // eslint-disable-next-line no-console
+  console.log("metric_event", {
+    event,
+    payload: payload || {},
+    userId: req.user.userId,
+    timestamp: new Date().toISOString(),
+  });
+  return res.json({ ok: true });
+});
+
 // Profile endpoints
 app.get("/api/profile", authMiddleware, async (req, res) => {
   const user = await prisma.user.findUnique({
@@ -754,6 +904,151 @@ app.put("/api/profile", authMiddleware, async (req, res) => {
     // eslint-disable-next-line no-console
     console.error("profile_update_error", err);
     res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/barcode/lookup", authMiddleware, async (req, res) => {
+  if (!BARCODE_SCANNING_ENABLED) {
+    return res.status(403).json({ error: "barcode_scanning_disabled" });
+  }
+  const { barcode } = req.body || {};
+  if (!barcode) return res.status(400).json({ error: "barcode_required" });
+  const startedAt = Date.now();
+  try {
+    const result = await resolveBarcode(barcode);
+    const lookupMs = Date.now() - startedAt;
+    // eslint-disable-next-line no-console
+    console.log("barcode_lookup_source", {
+      barcode,
+      source: result.source,
+      userId: req.user.userId,
+      timestamp: new Date().toISOString(),
+      lookupMs,
+    });
+    return res.json({ ...result, lookupMs });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("barcode_lookup_failed", err);
+    return res.status(500).json({ error: "barcode_lookup_failed" });
+  }
+});
+
+app.post("/api/barcode/consume", authMiddleware, async (req, res) => {
+  if (!BARCODE_SCANNING_ENABLED) {
+    return res.status(403).json({ error: "barcode_scanning_disabled" });
+  }
+  const { barcode, mealType, consumedAt = null, tzOffsetMinutes = 0 } = req.body || {};
+  if (!barcode) return res.status(400).json({ error: "barcode_required" });
+
+  const userId = req.user.userId;
+  const resolvedMealType = mealType && mealType !== "unspecified" ? mealType : "snack";
+  const mealConsumedAt = consumedAt ? new Date(consumedAt) : new Date();
+  const dateStr = formatLocalYMD(mealConsumedAt, tzOffsetMinutes);
+
+  try {
+    const result = await resolveBarcode(barcode);
+    const servingGrams = parseServingSizeGrams(result.servingSize) || 100;
+    const nutrientFactor = servingGrams / 100;
+    const nutrients = scaleNutrients(normalizeNutrients(result.nutrients), nutrientFactor);
+    const mealTotals = accumulateNutrients({ ...emptyNutrients }, nutrients);
+    const mealId = uuid();
+    let createdMeal = null;
+
+    await prisma.$transaction(async (tx) => {
+      const mealRecord = await tx.meal.create({
+        data: {
+          id: mealId,
+          userId,
+          mealType: resolvedMealType,
+          consumedAt: mealConsumedAt,
+          text: result.name || `Barcode ${barcode}`,
+          items: {
+            create: [
+              {
+                id: uuid(),
+                foodId: `barcode-${barcode}`,
+                name: result.name || `Barcode ${barcode}`,
+                quantity: 1,
+                unit: result.servingSize || "serving",
+                grams: servingGrams,
+                source: result.source || "barcode",
+                calories: nutrients.calories || 0,
+                protein_g: nutrients.protein_g || 0,
+                carbs_g: nutrients.carbs_g || 0,
+                fat_g: nutrients.fat_g || 0,
+                fiber_g: nutrients.fiber_g || 0,
+                sugars_g: nutrients.sugars_g || 0,
+                saturated_fat_g: nutrients.saturated_fat_g || 0,
+                trans_fat_g: nutrients.trans_fat_g || 0,
+                cholesterol_mg: nutrients.cholesterol_mg || 0,
+                sodium_mg: nutrients.sodium_mg || 0,
+                vitamin_d_mcg: nutrients.vitamin_d_mcg || 0,
+                calcium_mg: nutrients.calcium_mg || 0,
+                iron_mg: nutrients.iron_mg || 0,
+                potassium_mg: nutrients.potassium_mg || 0,
+              },
+            ],
+          },
+        },
+        include: { items: true },
+      });
+
+      createdMeal = {
+        ...mealRecord,
+        items: mealRecord.items.map((i) => ({
+          ...i,
+          nutrients: normalizeNutrients({
+            calories: i.calories,
+            protein_g: i.protein_g,
+            carbs_g: i.carbs_g,
+            fat_g: i.fat_g,
+            fiber_g: i.fiber_g,
+            sugars_g: i.sugars_g,
+            saturated_fat_g: i.saturated_fat_g,
+            trans_fat_g: i.trans_fat_g,
+            cholesterol_mg: i.cholesterol_mg,
+            sodium_mg: i.sodium_mg,
+            vitamin_d_mcg: i.vitamin_d_mcg,
+            calcium_mg: i.calcium_mg,
+            iron_mg: i.iron_mg,
+            potassium_mg: i.potassium_mg,
+          }),
+        })),
+        total: mealTotals,
+      };
+
+      await tx.dailyTotal.upsert({
+        where: { userId_date: { userId, date: new Date(dateStr) } },
+        update: {
+          calories: { increment: mealTotals.calories },
+          protein_g: { increment: mealTotals.protein_g },
+          carbs_g: { increment: mealTotals.carbs_g },
+          fat_g: { increment: mealTotals.fat_g },
+        },
+        create: {
+          userId,
+          date: new Date(dateStr),
+          calories: mealTotals.calories,
+          protein_g: mealTotals.protein_g,
+          carbs_g: mealTotals.carbs_g,
+          fat_g: mealTotals.fat_g,
+        },
+      });
+    });
+
+    const dayTotals = await recomputeDayTotals(userId, dateStr, tzOffsetMinutes);
+    return res.json({
+      meal: { ...createdMeal, mealType: resolvedMealType, consumedAt: mealConsumedAt },
+      day: { userId, date: dateStr, ...dayTotals },
+      barcode: {
+        source: result.source,
+        confidence: result.confidence || computeBarcodeConfidence(result.source),
+      },
+      clampedFuture: false,
+    });
+  } catch (err) {
+    console.error("barcode_consume_failed", err);
+    return res.status(500).json({ error: "barcode_consume_failed" });
   }
 });
 

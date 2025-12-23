@@ -95,3 +95,43 @@ export function fetchTrends(metrics, period, token) {
     cache: "no-store",
   });
 }
+
+export function fetchConfig(token) {
+  return fetch(`${API_BASE}/config`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+}
+
+export function lookupBarcode(barcode, token) {
+  return fetch(`${API_BASE}/barcode/lookup`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ barcode }),
+  });
+}
+
+export function consumeBarcode(barcode, token, mealType, tzOffsetMinutes) {
+  return fetch(`${API_BASE}/barcode/consume`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ barcode, mealType, tzOffsetMinutes }),
+  });
+}
+
+export function postMetric(event, payload, token) {
+  return fetch(`${API_BASE}/metrics`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ event, payload }),
+  });
+}

@@ -43,6 +43,7 @@ services:
       SKIP_LLM: "${SKIP_LLM:-false}"
       FORCE_LLM: "${FORCE_LLM:-true}"
       JWT_SECRET: "${JWT_SECRET:-}"
+      BARCODE_SCANNING_ENABLED: "${BARCODE_SCANNING_ENABLED:-true}"
     ports:
       - "4000:4000"
     depends_on:
@@ -57,8 +58,11 @@ services:
       dockerfile: ./frontend/pwa/Dockerfile
     ports:
       - "8080:80"
+      - "8443:443"
     depends_on:
       - api
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
 
 volumes:
   ollama_models:

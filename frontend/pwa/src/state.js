@@ -3,8 +3,27 @@ const isLocalhost = location.hostname === "localhost" || location.hostname === "
 export const API_BASE = window.API_BASE || (isLocalhost ? "http://localhost:4000/api" : "/api");
 export const AUTH_BASE = API_BASE.replace(/\/api$/, "");
 
-const storedDeviceToken = localStorage.getItem("mfaDeviceToken") || "";
-const storedTheme = localStorage.getItem("appTheme") || "auto";
+function safeStorageGet(key, fallback = "") {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch (_err) {
+    return fallback;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (_err) {
+    // Ignore storage errors (private mode, blocked storage, etc.).
+  }
+}
+
+export { safeStorageGet, safeStorageSet };
+
+const storedDeviceToken = safeStorageGet("mfaDeviceToken", "");
+const storedTheme = safeStorageGet("appTheme", "auto");
 export const PIE_COLORS = ["#2563eb", "#0ea5e9", "#22c55e", "#f59e0b", "#a855f7", "#f97316"];
 
 export const state = {
@@ -20,7 +39,7 @@ export const state = {
   updateAvailable: false,
   theme: storedTheme, // auto | light | dark
   toast: null,
-  showTutorial: !localStorage.getItem("tutorialSeen"),
+  showTutorial: !safeStorageGet("tutorialSeen", ""),
   miniBarKeys: ["calories", "protein_g", "carbs_g", "fat_g", "sugars_g"],
   historyRangeDays: 7,
   loadingMore: false,
@@ -80,6 +99,13 @@ export const state = {
     confidence: null,
     showTrends: true,
     dataHash: "",
+  },
+  features: {
+    barcode_scanning_enabled: false,
+  },
+  barcodeScanner: {
+    active: false,
+    error: null,
   },
   trendPreferences: {
     metrics: [],

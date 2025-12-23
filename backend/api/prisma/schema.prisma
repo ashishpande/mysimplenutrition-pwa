@@ -114,3 +114,16 @@ model Summary {
   @@index([userId, range, startDate, endDate])
   @@unique([userId, range, summaryKey])
 }
+
+model BarcodeCache {
+  barcode     String   @id
+  name        String
+  brand       String?
+  servingSize String?
+  nutrients   Json
+  source      String
+  verified    Boolean  @default(false)
+  confidence  Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

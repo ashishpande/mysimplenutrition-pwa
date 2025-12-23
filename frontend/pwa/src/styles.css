@@ -120,6 +120,15 @@ main {
   gap: 18px;
 }
 
+.summary-teaser {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.summary-teaser strong {
+  font-weight: 700;
+}
+
 @media (max-width: 900px) {
   .app-header {
     grid-template-columns: 1fr auto;
@@ -181,6 +190,16 @@ main {
   }
   .day-summary .mini-stat {
     padding: 8px 10px;
+  }
+}
+
+@media (max-width: 820px) {
+  .log-input .icon-btn {
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+    background: #e0f2fe;
+  }
+  .log-field::placeholder {
+    color: #94a3b8;
   }
 }
 
@@ -1224,6 +1243,18 @@ details[open] > summary .summary-caret {
   font-size: 0.9rem;
 }
 
+.scanner-privacy {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.scanner-title {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
 .barcode-manual {
   display: grid;
   gap: 10px;
@@ -1250,6 +1281,16 @@ details[open] > summary .summary-caret {
   overflow: hidden;
 }
 
+.barcode-video::after {
+  content: "";
+  position: absolute;
+  inset: 12% 14%;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  border-radius: 12px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
 .barcode-video video,
 .barcode-video canvas {
   position: absolute;
@@ -1257,6 +1298,10 @@ details[open] > summary .summary-caret {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.barcode-manual.is-hidden {
+  display: none;
 }
 
 .barcode-actions {
@@ -1404,14 +1449,33 @@ body.theme-dark,
 
 .update-banner {
   margin: 12px 0;
-  padding: 10px 14px;
+  padding: 6px 10px;
   background: #f1f5f9;
   border: 1px solid #cbd5e1;
-  border-radius: 12px;
+  border-radius: 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  font-size: 0.9rem;
+}
+
+.update-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.update-actions .primary {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+
+.update-actions .ghost {
+  border-radius: 10px;
+  padding: 4px 8px;
+  min-width: 32px;
+  font-size: 0.9rem;
 }
 
 :root.theme-dark .update-banner,

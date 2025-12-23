@@ -1446,8 +1446,8 @@ function defaultTimeForSlot(slot) {
 }
 
 function parseMealText(text, tzOffsetMinutes = 0) {
-  // Represent "now" in the user's local time by shifting with tzOffsetMinutes.
-  const nowLocal = new Date(Date.now() + tzOffsetMinutes * 60000);
+  // Represent "now" in the user's local time by shifting from UTC.
+  const nowLocal = new Date(Date.now() - tzOffsetMinutes * 60000);
   const slot = detectMealSlot(text);
   const daysAgoMatch = text.match(/(\d+)\s+days?\s+ago/i);
   if (daysAgoMatch) {
@@ -1457,11 +1457,11 @@ function parseMealText(text, tzOffsetMinutes = 0) {
     const def = defaultTimeForSlot(slot);
     baseLocal.setHours(def.hours, def.minutes, 0, 0);
     const cleanedText = text.replace(daysAgoMatch[0], "").replace(/\s+/g, " ").trim();
-    const utcDate = new Date(baseLocal.getTime() - tzOffsetMinutes * 60000);
+    const utcDate = new Date(baseLocal.getTime() + tzOffsetMinutes * 60000);
     return { foodText: cleanedText || text.trim(), mealSlot: slot, consumedAt: utcDate, clampedFuture: false };
   }
   const parsed = chrono.parse(text, nowLocal, { forwardDate: false });
-  let consumedAt = new Date(nowLocal.getTime() - tzOffsetMinutes * 60000);
+  let consumedAt = new Date(nowLocal.getTime() + tzOffsetMinutes * 60000);
   let cleanedText = text;
   let clampedFuture = false;
   if (parsed.length) {
@@ -1477,14 +1477,14 @@ function parseMealText(text, tzOffsetMinutes = 0) {
           .replace(/\s+/g, " ")
           .trim();
       }
-      consumedAt = new Date(localDate.getTime() - tzOffsetMinutes * 60000);
+      consumedAt = new Date(localDate.getTime() + tzOffsetMinutes * 60000);
     }
   }
   if (parsed.length && parsed[0].start && parsed[0].start.isCertain("day") && !parsed[0].start.isCertain("hour")) {
-    const d = new Date(consumedAt.getTime() + tzOffsetMinutes * 60000);
+    const d = new Date(consumedAt.getTime() - tzOffsetMinutes * 60000);
     const def = defaultTimeForSlot(slot);
     d.setHours(def.hours, def.minutes, 0, 0);
-    consumedAt = new Date(d.getTime() - tzOffsetMinutes * 60000);
+    consumedAt = new Date(d.getTime() + tzOffsetMinutes * 60000);
   }
   const now = new Date();
   if (consumedAt.getTime() > now.getTime()) {

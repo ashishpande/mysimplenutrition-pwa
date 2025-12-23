@@ -389,6 +389,12 @@ function buildWeeklyLocalSummary(stats) {
   return `Last 7 days: ${daysLogged} ${dayLabel} logged, ${mealCount || "?"} ${mealLabel} and ${stats.totalCalories.toLocaleString()} kcal, P ${stats.proteinG}g, C ${stats.carbsG}g, F ${stats.fatG}g (avg ${stats.avgCaloriesPerDay.toLocaleString()} kcal/day).`;
 }
 
+function buildSummaryTeaser(stats) {
+  const calories = stats?.totalCalories || 0;
+  const protein = stats?.proteinG || 0;
+  return `Today's summary: ${calories.toLocaleString()} kcal · Protein ${protein}g`;
+}
+
 function normalizeTotals(total = {}) {
   return {
     calories: total.calories || 0,
@@ -1210,7 +1216,10 @@ function renderApp() {
         state.updateAvailable
           ? `<div class="update-banner">
               <span>New version available.</span>
-              <button id="refresh-app" class="primary">Refresh</button>
+              <div class="update-actions">
+                <button id="refresh-app" class="primary">Refresh</button>
+                <button id="dismiss-update" class="ghost" aria-label="Dismiss update banner">✕</button>
+              </div>
             </div>`
           : ""
       }
@@ -1246,6 +1255,7 @@ function renderApp() {
           ${state.today?.day ? `<section class="card">
             ${renderDaySummary(state.today.day, state.today.meals)}
           </section>` : ""}
+          <div class="summary-teaser">${buildSummaryTeaser(todayBaseline)}</div>
           <details id="today-summary" class="card summary-card" ${state.summary.today.open ? "open" : ""}>
             <summary><span class="summary-title">Summary</span></summary>
             <div class="summary-block">
@@ -1471,7 +1481,8 @@ function renderApp() {
       <div id="barcode-overlay" class="overlay ${state.barcodeScanner.active ? "" : "hidden"}">
         <div class="barcode-frame">
           <div id="barcode-video" class="barcode-video"></div>
-          <p class="scanner-help">Hold a product barcode up to your camera, or enter it manually.</p>
+          <h3 class="scanner-title">Scan a barcode</h3>
+          <p class="scanner-help">${isDesktop ? "Hold the barcode inside the frame." : "Packaged foods work best"}</p>
           ${isDesktop ? `
             <div class="barcode-manual">
               <input id="manual-barcode" placeholder="Enter barcode (UPC/EAN)" inputmode="numeric" />
@@ -1482,7 +1493,13 @@ function renderApp() {
               <button class="ghost" id="barcode-cancel" type="button">Cancel</button>
             </div>
           ` : `
+            <p class="scanner-privacy">Camera is only used to scan barcodes.</p>
+            <div class="barcode-manual is-hidden" id="barcode-manual-mobile">
+              <input id="manual-barcode" placeholder="Enter barcode (UPC/EAN)" inputmode="numeric" />
+              <button class="primary" id="manual-barcode-submit" type="button">Lookup</button>
+            </div>
             <div class="barcode-actions">
+              <button class="ghost" id="barcode-manual-toggle" type="button">Enter barcode manually</button>
               <button class="ghost" id="barcode-cancel" type="button">Cancel</button>
             </div>
           `}
@@ -1754,10 +1771,17 @@ function renderApp() {
       };
     });
     const loadMoreBtn = document.getElementById("load-more-days");
-    if (loadMoreBtn) {
-      loadMoreBtn.onclick = () => loadMoreDays();
-      loadMoreBtn.onanimationstart = (e) => e.stopPropagation();
-    }
+  if (loadMoreBtn) {
+    loadMoreBtn.onclick = () => loadMoreDays();
+    loadMoreBtn.onanimationstart = (e) => e.stopPropagation();
+  }
+  const dismissUpdate = document.getElementById("dismiss-update");
+  if (dismissUpdate) {
+    dismissUpdate.onclick = () => {
+      state.updateAvailable = false;
+      render();
+    };
+  }
   }
   if (tab === "trends") {
     const toggleBtn = document.getElementById("trend-customize-toggle");
@@ -1868,6 +1892,13 @@ function renderApp() {
   const barcodeStart = document.getElementById("barcode-start-camera");
   if (barcodeStart) {
     barcodeStart.onclick = () => startBarcodeScanner();
+  }
+  const barcodeManualToggle = document.getElementById("barcode-manual-toggle");
+  if (barcodeManualToggle) {
+    barcodeManualToggle.onclick = () => {
+      const manualWrap = document.getElementById("barcode-manual-mobile");
+      if (manualWrap) manualWrap.classList.toggle("is-hidden");
+    };
   }
   const manualSubmit = document.getElementById("manual-barcode-submit");
   if (manualSubmit) {

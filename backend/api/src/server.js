@@ -671,6 +671,25 @@ function buildLookupKey({ food, brand }) {
   return `${(brand || "").trim()} ${food.trim()}`.trim().toLowerCase();
 }
 
+function defaultNutritionFallback() {
+  return {
+    calories: 150,
+    protein_g: 5,
+    carbs_g: 20,
+    fat_g: 5,
+    fiber_g: 2,
+    sugars_g: 5,
+    saturated_fat_g: 1,
+    trans_fat_g: 0,
+    cholesterol_mg: 10,
+    sodium_mg: 100,
+    vitamin_d_mcg: 0,
+    calcium_mg: 50,
+    iron_mg: 1,
+    potassium_mg: 200,
+  };
+}
+
 // Seed foods (placeholder).
 foods.set("egg", {
   id: "food-egg",
@@ -2004,9 +2023,11 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
       try {
         estimate = await estimateNutrition(displayName);
       } catch (err) {
-        console.error("llm_food_estimate_failed", err?.message || err);
+        console.error("llm_food_estimate_failed", err?.message || err, {
+          provider: useGroq ? "groq" : hasOllama ? "ollama" : "none",
+        });
       }
-      const normalized = normalizeNutrients(estimate || {});
+      const normalized = normalizeNutrients(estimate || defaultNutritionFallback());
       const id = base?.id || `food-${lookupKey.replace(/\s+/g, "-") || uuid()}`;
       base = {
         id,

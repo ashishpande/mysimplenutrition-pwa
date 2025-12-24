@@ -697,6 +697,8 @@ function stopBarcodeScanner() {
   }
   state.barcodeScanner.active = false;
   state.barcodeScanner.error = null;
+  state.barcodeScanner.streaming = false;
+  state.barcodeScanner.retryCount = 0;
 }
 
 function openBarcodeEntryModal(barcode) {
@@ -891,39 +893,69 @@ async function onBarcodeDetected(result) {
 }
 
 async function startBarcodeScanner() {
-  if (state.barcodeScanner.active) return;
+  if (state.barcodeScanner.streaming) return;
   if (!window.Quagga) {
     showToast("Barcode scanning not supported on this device");
     return;
   }
   state.barcodeScanner.active = true;
   state.barcodeScanner.error = null;
+  state.barcodeScanner.streaming = true;
   render();
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await new Promise((resolve) => setTimeout(resolve, 90));
   const video = document.getElementById("barcode-video");
-  if (!video) return;
+  if (!video) {
+    state.barcodeScanner.streaming = false;
+    return;
+  }
   try {
     trackEvent("barcode_scanner_method_used", { method: "camera" });
     trackEvent("barcode_scan_started");
-    window.Quagga.init({
-      inputStream: {
-        type: "LiveStream",
-        target: video,
-        constraints: { facingMode: "environment" },
-      },
-      decoder: {
-        readers: ["ean_reader", "upc_reader", "upc_e_reader"],
-      },
-    }, (err) => {
-      if (err) {
-        state.barcodeScanner.error = "Camera access was blocked.";
-        trackEvent("barcode_scan_failed", { reason: "init_failed" });
-        stopBarcodeScanner();
-        render();
-        return;
-      }
-      window.Quagga.start();
-    });
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const warmStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        warmStream.getTracks().forEach((track) => track.stop());
+      } catch (_err) {}
+    }
+    const initQuagga = () =>
+      new Promise((resolve, reject) => {
+        window.Quagga.init(
+          {
+            inputStream: {
+              type: "LiveStream",
+              target: video,
+              constraints: { facingMode: "environment" },
+            },
+            decoder: {
+              readers: ["ean_reader", "upc_reader", "upc_e_reader"],
+            },
+          },
+          (err) => (err ? reject(err) : resolve())
+        );
+      });
+    try {
+      await initQuagga();
+    } catch (_err) {
+      try {
+        window.Quagga.stop();
+      } catch (_stopErr) {}
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await initQuagga();
+    }
+    window.Quagga.start();
     window.Quagga.onDetected(onBarcodeDetected);
+    setTimeout(() => {
+      if (!state.barcodeScanner.active || !state.barcodeScanner.streaming) return;
+      const videoEl = document.querySelector("#barcode-video video");
+      const ready = videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
+      if (!ready && state.barcodeScanner.retryCount < 1) {
+        state.barcodeScanner.retryCount += 1;
+        stopBarcodeScanner();
+        state.barcodeScanner.active = true;
+        startBarcodeScanner();
+      }
+    }, 650);
   } catch (_err) {
     stopBarcodeScanner();
     state.barcodeScanner.error = "Camera access was blocked.";

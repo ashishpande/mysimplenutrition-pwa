@@ -106,6 +106,8 @@ export const state = {
   barcodeScanner: {
     active: false,
     error: null,
+    streaming: false,
+    retryCount: 0,
   },
   barcodeEntry: {
     open: false,

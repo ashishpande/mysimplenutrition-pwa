@@ -374,14 +374,58 @@ function parseServingSizeGrams(servingSize) {
 
 function computeManualConfidence(nutrients = {}) {
   let confidence = 0.4;
-  if (Number(nutrients.calories) > 0) confidence += 0.2;
-  if (Number(nutrients.protein_g) > 0 && Number(nutrients.carbs_g) > 0 && Number(nutrients.fat_g) > 0) {
+  if (Object.prototype.hasOwnProperty.call(nutrients, "calories")) confidence += 0.2;
+  if (
+    Object.prototype.hasOwnProperty.call(nutrients, "protein_g") &&
+    Object.prototype.hasOwnProperty.call(nutrients, "carbs_g") &&
+    Object.prototype.hasOwnProperty.call(nutrients, "fat_g")
+  ) {
     confidence += 0.2;
   }
-  if (Number(nutrients.fiber_g) > 0 || Number(nutrients.sodium_mg) > 0) {
-    confidence += 0.1;
+  const advancedKeys = [
+    "fiber_g",
+    "sugars_g",
+    "added_sugar_g",
+    "saturated_fat_g",
+    "trans_fat_g",
+    "cholesterol_mg",
+    "sodium_mg",
+  ];
+  const advancedCount = advancedKeys.filter((key) => Object.prototype.hasOwnProperty.call(nutrients, key)).length;
+  if (advancedCount >= 3) confidence += 0.1;
+  const micronutrientKeys = ["vitamin_d_mcg", "calcium_mg", "iron_mg", "potassium_mg"];
+  const hasMicros = micronutrientKeys.some((key) => Object.prototype.hasOwnProperty.call(nutrients, key));
+  if (hasMicros) confidence += 0.1;
+  return Math.min(confidence, 0.85);
+}
+
+function extractEnteredNutrients(values = {}) {
+  const manualKeys = [
+    "calories",
+    "protein_g",
+    "carbs_g",
+    "fat_g",
+    "fiber_g",
+    "sugars_g",
+    "added_sugar_g",
+    "saturated_fat_g",
+    "trans_fat_g",
+    "cholesterol_mg",
+    "sodium_mg",
+    "vitamin_d_mcg",
+    "calcium_mg",
+    "iron_mg",
+    "potassium_mg",
+  ];
+  const entered = {};
+  for (const key of manualKeys) {
+    const raw = values[key];
+    if (raw === "" || raw === null || raw === undefined) continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) continue;
+    entered[key] = n;
   }
-  return Math.min(confidence, 0.8);
+  return entered;
 }
 
 async function resolveBarcode(barcode, { allowLlm = true } = {}) {
@@ -1018,6 +1062,7 @@ app.post("/api/barcode/consume", authMiddleware, async (req, res) => {
         ...mealRecord,
         items: mealRecord.items.map((i) => ({
           ...i,
+          confidence,
           nutrients: normalizeNutrients({
             calories: i.calories,
             protein_g: i.protein_g,
@@ -1079,13 +1124,14 @@ app.post("/api/barcode/manual", authMiddleware, async (req, res) => {
   }
   const { barcode, name = "", servingSize = "100 g", nutrients = {}, tzOffsetMinutes = 0 } = req.body || {};
   if (!barcode) return res.status(400).json({ error: "barcode_required" });
-  if (!Number(nutrients?.calories)) return res.status(400).json({ error: "calories_required" });
+  const entered = extractEnteredNutrients(nutrients);
+  if (!Number(entered?.calories)) return res.status(400).json({ error: "calories_required" });
 
   const userId = req.user.userId;
   const mealConsumedAt = new Date();
   const dateStr = formatLocalYMD(mealConsumedAt, tzOffsetMinutes);
-  const normalized = normalizeNutrients(nutrients);
-  const confidence = computeManualConfidence(normalized);
+  const normalized = normalizeNutrients(entered);
+  const confidence = computeManualConfidence(entered);
   const displayName = name || `Barcode ${barcode}`;
 
   try {
@@ -1096,7 +1142,7 @@ app.post("/api/barcode/manual", authMiddleware, async (req, res) => {
         name: displayName,
         brand: "",
         servingSize,
-        nutrients: normalized,
+        nutrients: entered,
         source: "user_entered",
         verified: false,
         confidence,
@@ -1105,7 +1151,7 @@ app.post("/api/barcode/manual", authMiddleware, async (req, res) => {
         name: displayName,
         brand: "",
         servingSize,
-        nutrients: normalized,
+        nutrients: entered,
         source: "user_entered",
         verified: false,
         confidence,

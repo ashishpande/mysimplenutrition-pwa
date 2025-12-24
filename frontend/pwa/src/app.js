@@ -642,6 +642,16 @@ function renderTrendConfidence(confidence) {
 
 function renderItemBadge(item) {
   const source = item?.source || "";
+  const confidence = typeof item?.confidence === "number" ? item.confidence : null;
+  if (confidence !== null) {
+    if (confidence >= 0.85) {
+      return `<span class="badge verified" title="Verified from barcode data">Verified</span>`;
+    }
+    if (confidence >= 0.6) {
+      return `<span class="badge estimated" title="Estimated from nutrition label">Estimated</span>`;
+    }
+    return `<span class="badge partial" title="Partial nutrition data">Partial</span>`;
+  }
   if (item?.verified === true || source === "openfoodfacts" || source === "local") {
     return `<span class="badge verified" title="Verified from barcode data">Verified</span>`;
   }
@@ -694,6 +704,7 @@ function openBarcodeEntryModal(barcode) {
     open: true,
     barcode,
     name: "",
+    fullLabel: false,
     servingSize: "100 g",
     calories: "",
     protein_g: "",
@@ -701,7 +712,15 @@ function openBarcodeEntryModal(barcode) {
     fat_g: "",
     fiber_g: "",
     sugars_g: "",
+    added_sugar_g: "",
+    saturated_fat_g: "",
+    trans_fat_g: "",
+    cholesterol_mg: "",
     sodium_mg: "",
+    vitamin_d_mcg: "",
+    calcium_mg: "",
+    iron_mg: "",
+    potassium_mg: "",
   };
   render();
   trackEvent("barcode_manual_entry_opened", { barcode });
@@ -711,27 +730,45 @@ function updateBarcodeEntryField(field, value) {
   state.barcodeEntry = { ...state.barcodeEntry, [field]: value };
 }
 
-function normalizeBarcodeNutrients(entry) {
-  const num = (val) => {
-    const n = Number(val);
-    return Number.isFinite(n) ? n : 0;
-  };
-  return {
-    calories: num(entry.calories),
-    protein_g: num(entry.protein_g),
-    carbs_g: num(entry.carbs_g),
-    fat_g: num(entry.fat_g),
-    fiber_g: num(entry.fiber_g),
-    sugars_g: num(entry.sugars_g),
-    sodium_mg: num(entry.sodium_mg),
-  };
+function collectBarcodeNutrients(entry) {
+  const nutrients = {};
+  const enteredKeys = [];
+  const fields = [
+    "calories",
+    "protein_g",
+    "carbs_g",
+    "fat_g",
+    "fiber_g",
+    "sugars_g",
+    "sodium_mg",
+  ];
+  const fullLabelFields = [
+    "added_sugar_g",
+    "saturated_fat_g",
+    "trans_fat_g",
+    "cholesterol_mg",
+    "vitamin_d_mcg",
+    "calcium_mg",
+    "iron_mg",
+    "potassium_mg",
+  ];
+  if (entry.fullLabel) fields.push(...fullLabelFields);
+  for (const key of fields) {
+    const raw = entry[key];
+    if (raw === "" || raw === null || raw === undefined) continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) continue;
+    nutrients[key] = n;
+    enteredKeys.push(key);
+  }
+  return { nutrients, enteredKeys };
 }
 
 async function submitManualBarcodeSave() {
   const entry = state.barcodeEntry;
   if (!entry.calories) return;
   const tzOffsetMinutes = new Date().getTimezoneOffset();
-  const nutrients = normalizeBarcodeNutrients(entry);
+  const { nutrients, enteredKeys } = collectBarcodeNutrients(entry);
   const payload = {
     barcode: entry.barcode,
     name: entry.name,
@@ -748,18 +785,20 @@ async function submitManualBarcodeSave() {
     invalidateAllSummaries();
     fetchToday();
     fetchDays();
-    const filled = ["calories", "protein", "carbs", "fat"].filter((field) => {
-      if (field === "calories") return !!entry.calories;
-      if (field === "protein") return !!entry.protein_g;
-      if (field === "carbs") return !!entry.carbs_g;
-      if (field === "fat") return !!entry.fat_g;
-      return false;
-    });
     trackEvent("barcode_manual_entry_saved", {
       barcode: entry.barcode,
-      fields_filled: filled,
+      fields_filled: enteredKeys,
       confidence: data?.barcode?.confidence ?? 0,
     });
+    if (entry.fullLabel) {
+      const micronutrients = ["vitamin_d_mcg", "calcium_mg", "iron_mg", "potassium_mg"];
+      const includedMicros = micronutrients.some((key) => enteredKeys.includes(key));
+      trackEvent("nutrition_full_label_saved", {
+        barcode: entry.barcode,
+        nutrients_entered_count: enteredKeys.length,
+        included_micros: includedMicros,
+      });
+    }
     showToast("Barcode added");
   } catch (_err) {
     showToast("Could not save barcode");
@@ -1639,6 +1678,10 @@ function renderApp() {
                 <span>Calories (required)</span>
                 <input id="barcode-calories" type="number" inputmode="decimal" value="${state.barcodeEntry.calories}" />
               </label>
+              <label class="checkbox barcode-checkbox">
+                <input id="barcode-full-label" type="checkbox" ${state.barcodeEntry.fullLabel ? "checked" : ""} />
+                <span>Add full nutrition label</span>
+              </label>
               <details class="details-card" open>
                 <summary>Macros (optional)</summary>
                 <div class="field-grid">
@@ -1671,6 +1714,44 @@ function renderApp() {
                     <span>Sodium (mg)</span>
                     <input id="barcode-sodium" type="number" inputmode="decimal" value="${state.barcodeEntry.sodium_mg}" />
                   </label>
+                  ${
+                    state.barcodeEntry.fullLabel
+                      ? `
+                      <label class="field">
+                        <span>Added sugar (g)</span>
+                        <input id="barcode-added-sugar" type="number" inputmode="decimal" value="${state.barcodeEntry.added_sugar_g}" />
+                      </label>
+                      <label class="field">
+                        <span>Saturated fat (g)</span>
+                        <input id="barcode-sat-fat" type="number" inputmode="decimal" value="${state.barcodeEntry.saturated_fat_g}" />
+                      </label>
+                      <label class="field">
+                        <span>Trans fat (g)</span>
+                        <input id="barcode-trans-fat" type="number" inputmode="decimal" value="${state.barcodeEntry.trans_fat_g}" />
+                      </label>
+                      <label class="field">
+                        <span>Cholesterol (mg)</span>
+                        <input id="barcode-cholesterol" type="number" inputmode="decimal" value="${state.barcodeEntry.cholesterol_mg}" />
+                      </label>
+                      <label class="field">
+                        <span>Vitamin D (mcg)</span>
+                        <input id="barcode-vitamin-d" type="number" inputmode="decimal" value="${state.barcodeEntry.vitamin_d_mcg}" />
+                      </label>
+                      <label class="field">
+                        <span>Calcium (mg)</span>
+                        <input id="barcode-calcium" type="number" inputmode="decimal" value="${state.barcodeEntry.calcium_mg}" />
+                      </label>
+                      <label class="field">
+                        <span>Iron (mg)</span>
+                        <input id="barcode-iron" type="number" inputmode="decimal" value="${state.barcodeEntry.iron_mg}" />
+                      </label>
+                      <label class="field">
+                        <span>Potassium (mg)</span>
+                        <input id="barcode-potassium" type="number" inputmode="decimal" value="${state.barcodeEntry.potassium_mg}" />
+                      </label>
+                    `
+                      : ""
+                  }
                 </div>
               </details>
               <div class="modal-actions">
@@ -2100,6 +2181,17 @@ function renderApp() {
       render();
     };
   }
+  const entryFullLabel = document.getElementById("barcode-full-label");
+  if (entryFullLabel) {
+    entryFullLabel.onchange = (e) => {
+      const enabled = !!e.target.checked;
+      updateBarcodeEntryField("fullLabel", enabled);
+      if (enabled) {
+        trackEvent("nutrition_full_label_enabled", { barcode: state.barcodeEntry.barcode });
+      }
+      render();
+    };
+  }
   const entryProtein = document.getElementById("barcode-protein");
   if (entryProtein) entryProtein.oninput = (e) => updateBarcodeEntryField("protein_g", e.target.value);
   const entryCarbs = document.getElementById("barcode-carbs");
@@ -2110,8 +2202,24 @@ function renderApp() {
   if (entryFiber) entryFiber.oninput = (e) => updateBarcodeEntryField("fiber_g", e.target.value);
   const entrySugars = document.getElementById("barcode-sugars");
   if (entrySugars) entrySugars.oninput = (e) => updateBarcodeEntryField("sugars_g", e.target.value);
+  const entryAddedSugar = document.getElementById("barcode-added-sugar");
+  if (entryAddedSugar) entryAddedSugar.oninput = (e) => updateBarcodeEntryField("added_sugar_g", e.target.value);
+  const entrySatFat = document.getElementById("barcode-sat-fat");
+  if (entrySatFat) entrySatFat.oninput = (e) => updateBarcodeEntryField("saturated_fat_g", e.target.value);
+  const entryTransFat = document.getElementById("barcode-trans-fat");
+  if (entryTransFat) entryTransFat.oninput = (e) => updateBarcodeEntryField("trans_fat_g", e.target.value);
+  const entryCholesterol = document.getElementById("barcode-cholesterol");
+  if (entryCholesterol) entryCholesterol.oninput = (e) => updateBarcodeEntryField("cholesterol_mg", e.target.value);
   const entrySodium = document.getElementById("barcode-sodium");
   if (entrySodium) entrySodium.oninput = (e) => updateBarcodeEntryField("sodium_mg", e.target.value);
+  const entryVitaminD = document.getElementById("barcode-vitamin-d");
+  if (entryVitaminD) entryVitaminD.oninput = (e) => updateBarcodeEntryField("vitamin_d_mcg", e.target.value);
+  const entryCalcium = document.getElementById("barcode-calcium");
+  if (entryCalcium) entryCalcium.oninput = (e) => updateBarcodeEntryField("calcium_mg", e.target.value);
+  const entryIron = document.getElementById("barcode-iron");
+  if (entryIron) entryIron.oninput = (e) => updateBarcodeEntryField("iron_mg", e.target.value);
+  const entryPotassium = document.getElementById("barcode-potassium");
+  if (entryPotassium) entryPotassium.oninput = (e) => updateBarcodeEntryField("potassium_mg", e.target.value);
   const entrySave = document.getElementById("barcode-save");
   if (entrySave) entrySave.onclick = () => submitManualBarcodeSave();
   const entrySkip = document.getElementById("barcode-skip");

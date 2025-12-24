@@ -39,6 +39,11 @@ body {
   word-break: break-word;
 }
 
+.auth-header .brand-title {
+  white-space: nowrap;
+  word-break: normal;
+}
+
 header p {
   margin: 0 0 16px;
   color: #4b5563;
@@ -155,6 +160,12 @@ main {
   }
   .brand-title {
     font-size: 17px;
+  }
+  .app-header .brand-title {
+    font-size: 15px;
+    letter-spacing: -0.03em;
+    white-space: nowrap;
+    word-break: normal;
   }
   .brand-block p {
     font-size: 12px;
@@ -1081,6 +1092,11 @@ details[open] > summary .summary-caret {
   color: #92400e;
 }
 
+.badge.partial {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .trend-header {
   display: flex;
   align-items: center;
@@ -1453,6 +1469,10 @@ details[open] > summary .summary-caret {
 
 label.checkbox input {
   width: auto;
+}
+
+.barcode-checkbox {
+  margin: 8px 0 4px;
 }
 
 header p span {

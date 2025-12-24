@@ -1609,6 +1609,126 @@ async function findFoodFromHistory(displayName) {
   }
 }
 
+function servingToGrams(size, unit) {
+  const amount = Number(size);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const cleanedUnit = String(unit || "").trim().toLowerCase();
+  if (["g", "gm", "gram", "grams"].includes(cleanedUnit)) return amount;
+  if (["ml", "milliliter", "milliliters"].includes(cleanedUnit)) return amount;
+  if (["oz", "ounce", "ounces"].includes(cleanedUnit)) return amount * 28.3495;
+  return null;
+}
+
+async function findFoodFromBarcodeCacheByName(displayName) {
+  const lookup = String(displayName || "").trim();
+  if (!lookup) return null;
+  try {
+    const cached = await prisma.barcodeCache.findFirst({
+      where: { name: { equals: lookup, mode: "insensitive" } },
+    });
+    if (!cached) return null;
+    const servingSize = cached.servingSize || "100 g";
+    const baseGrams = parseServingSizeGrams(servingSize) || 100;
+    return {
+      id: cached.barcode ? `barcode-${cached.barcode}` : `food-${lookup.toLowerCase().replace(/\s+/g, "-")}`,
+      name: cached.name,
+      serving: { unit: servingSize, grams: baseGrams },
+      nutrients: normalizeNutrients(cached.nutrients || {}),
+      source: "barcode_cache",
+    };
+  } catch (err) {
+    console.error("barcode_cache_lookup_failed", err);
+    return null;
+  }
+}
+
+async function findFoodFromFoodTable({ food, brand }) {
+  const name = String(food || "").trim();
+  if (!name) return null;
+  try {
+    let row = null;
+    if (brand) {
+      const brandName = String(brand).trim();
+      if (brandName) {
+        const rows = await prisma.$queryRaw`
+          SELECT
+            id, name, "brandName", "servingSize", "servingUnit",
+            calories, "totalFat", "saturatedFat", "transFat", cholesterol,
+            sodium, "totalCarbs", "dietaryFiber", sugars, protein,
+            "vitaminD", calcium, iron, potassium, caffeine
+          FROM public."Food"
+          WHERE lower(name) = lower(${name}) AND lower("brandName") = lower(${brandName})
+          LIMIT 1
+        `;
+        row = rows?.[0] || null;
+      }
+    }
+    if (!row) {
+      const rows = await prisma.$queryRaw`
+        SELECT
+          id, name, "brandName", "servingSize", "servingUnit",
+          calories, "totalFat", "saturatedFat", "transFat", cholesterol,
+          sodium, "totalCarbs", "dietaryFiber", sugars, protein,
+          "vitaminD", calcium, iron, potassium, caffeine
+        FROM public."Food"
+        WHERE lower(name) = lower(${name})
+        LIMIT 1
+      `;
+      row = rows?.[0] || null;
+    }
+    if (!row) return null;
+    const servingUnit = row.servingUnit || "serving";
+    const servingGrams = servingToGrams(row.servingSize, servingUnit) || 100;
+    return {
+      id: row.id || `food-${name.toLowerCase().replace(/\s+/g, "-")}`,
+      name: row.brandName ? `${row.brandName} ${row.name}` : row.name,
+      serving: { unit: `${row.servingSize || ""} ${servingUnit}`.trim(), grams: servingGrams },
+      nutrients: normalizeNutrients({
+        calories: row.calories,
+        protein_g: row.protein,
+        carbs_g: row.totalCarbs,
+        fat_g: row.totalFat,
+        fiber_g: row.dietaryFiber,
+        sugars_g: row.sugars,
+        saturated_fat_g: row.saturatedFat,
+        trans_fat_g: row.transFat,
+        cholesterol_mg: row.cholesterol,
+        sodium_mg: row.sodium,
+        vitamin_d_mcg: row.vitaminD,
+        calcium_mg: row.calcium,
+        iron_mg: row.iron,
+        potassium_mg: row.potassium,
+      }),
+      source: "food_table",
+    };
+  } catch (err) {
+    console.error("food_table_lookup_failed", err);
+    return null;
+  }
+}
+
+async function resolveFoodBase({ food, brand, displayName }) {
+  const lookup = String(displayName || food || "").trim().toLowerCase();
+  if (!lookup) return null;
+  if (foods.has(lookup)) return foods.get(lookup);
+  const fromFoodTable = await findFoodFromFoodTable({ food, brand });
+  if (fromFoodTable) {
+    foods.set(lookup, fromFoodTable);
+    return fromFoodTable;
+  }
+  const fromBarcodeCache = await findFoodFromBarcodeCacheByName(displayName || food || "");
+  if (fromBarcodeCache) {
+    foods.set(lookup, fromBarcodeCache);
+    return fromBarcodeCache;
+  }
+  const fromHistory = await findFoodFromHistory(displayName || food || "");
+  if (fromHistory) {
+    foods.set(lookup, fromHistory);
+    return fromHistory;
+  }
+  return null;
+}
+
 function normalizeExtractionItem(raw) {
   if (!raw) return null;
   const food = String(raw.food || raw.name || "").trim();
@@ -1636,15 +1756,28 @@ Examples (input -> output):
   "2 cups of cooked brown rice with 5 oz grilled chicken" ->
   [{"food":"cooked brown rice","brand":null,"quantity":2,"unit":"cup"},{"food":"grilled chicken","brand":null,"quantity":5,"unit":"oz"}]
 Only return the JSON array. If nothing is found return [] with no extra text.`;
+  if (SKIP_LLM) return [];
   try {
-    const response = await callOllama(extractPrompt);
+    if (hasOllama) {
+      const response = await callOllama(extractPrompt);
+      const cleaned = response.trim().replace(/```json\n?|```\n?/g, "");
+      const parsed = JSON.parse(cleaned);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(normalizeExtractionItem).filter(Boolean);
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("food_extraction_llm_failed", err.message);
+  }
+  if (!useGroq) return [];
+  try {
+    const response = await callGroqExtractFoods(extractPrompt);
     const cleaned = response.trim().replace(/```json\n?|```\n?/g, "");
     const parsed = JSON.parse(cleaned);
     if (!Array.isArray(parsed)) return [];
     return parsed.map(normalizeExtractionItem).filter(Boolean);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("food_extraction_llm_failed", err.message);
+    console.error("food_extraction_groq_failed", err.message);
     return [];
   }
 }
@@ -1812,6 +1945,33 @@ async function callOllama(prompt) {
   return data.response;
 }
 
+async function callGroqExtractFoods(prompt) {
+  if (!useGroq) throw new Error("groq_unavailable");
+  const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      max_tokens: 400,
+    }),
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
+
+  const data = await response.json();
+  if (data?.error?.code === "model_decommissioned") {
+    throw new Error(`groq_model_decommissioned_${GROQ_MODEL}`);
+  }
+  return data.choices?.[0]?.message?.content || "[]";
+}
+
 // Protected routes below.
 app.post("/api/meals", authMiddleware, async (req, res) => {
   const { text = "", mealType, consumedAt = null, tzOffsetMinutes = 0, clientDateStr } = req.body || {};
@@ -1836,20 +1996,25 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
     const lookupKey = buildLookupKey(token);
     let base = FORCE_LLM ? null : foods.get(lookupKey);
     if (!base && !FORCE_LLM) {
-      base = await findFoodFromHistory(displayName);
+      base = await resolveFoodBase({ food: token.food, brand: token.brand, displayName });
     }
     const needsRefresh = !base || (base.source && String(base.source).includes("fallback"));
     if (needsRefresh) {
-      const estimate = await estimateNutrition(displayName);
-      const normalized = normalizeNutrients(estimate);
+      let estimate = null;
+      try {
+        estimate = await estimateNutrition(displayName);
+      } catch (err) {
+        console.error("llm_food_estimate_failed", err?.message || err);
+      }
+      const normalized = normalizeNutrients(estimate || {});
       const id = base?.id || `food-${lookupKey.replace(/\s+/g, "-") || uuid()}`;
       base = {
         id,
         name: displayName,
         serving: { unit: token.unit || base?.serving?.unit || "serving", grams: base?.serving?.grams || 100 },
         nutrients: normalized,
-        model_estimated: true,
-        source: estimate.source || "llm_estimated",
+        model_estimated: Boolean(estimate),
+        source: estimate?.source || "default",
       };
       foods.set(lookupKey, base);
     }

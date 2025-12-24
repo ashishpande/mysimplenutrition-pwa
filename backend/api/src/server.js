@@ -1058,11 +1058,12 @@ app.post("/api/barcode/consume", authMiddleware, async (req, res) => {
         include: { items: true },
       });
 
+      const itemConfidence = result.confidence || computeBarcodeConfidence(result.source);
       createdMeal = {
         ...mealRecord,
         items: mealRecord.items.map((i) => ({
           ...i,
-          confidence,
+          confidence: itemConfidence,
           nutrients: normalizeNutrients({
             calories: i.calories,
             protein_g: i.protein_g,

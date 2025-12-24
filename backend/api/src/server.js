@@ -690,6 +690,10 @@ function defaultNutritionFallback() {
   };
 }
 
+function hasNonZeroNutrients(nutrients = {}) {
+  return Object.values(nutrients).some((value) => Number(value) > 0);
+}
+
 // Seed foods (placeholder).
 foods.set("egg", {
   id: "food-egg",
@@ -1730,8 +1734,8 @@ async function resolveFoodBase({ food, brand, displayName }) {
   const lookup = String(displayName || food || "").trim().toLowerCase();
   if (!lookup) return null;
   if (foods.has(lookup)) return foods.get(lookup);
-  const fromFoodTable = await findFoodFromFoodTable({ food, brand });
-  if (fromFoodTable) {
+    const fromFoodTable = await findFoodFromFoodTable({ food, brand });
+  if (fromFoodTable && hasNonZeroNutrients(fromFoodTable.nutrients)) {
     foods.set(lookup, fromFoodTable);
     return fromFoodTable;
   }

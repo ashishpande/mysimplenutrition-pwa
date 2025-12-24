@@ -1820,6 +1820,35 @@ body.theme-dark .update-banner {
   min-height: 44px;
 }
 
+.day-meals-list .meal-item.swipeable {
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y;
+  transition: transform 0.15s ease;
+}
+
+.day-meals-list .meal-item.swipeable::after {
+  content: "Delete";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transform: translateX(100%);
+  transition: transform 0.15s ease;
+}
+
+.day-meals-list .meal-item.swipe-active::after {
+  transform: translateX(0);
+}
+
 :root.theme-dark .day-meals-list .meal-item,
 :root.theme-dark .day-meals-list .meal-item .meal-text,
 :root.theme-dark .day-meals-list .meal-item .meal-time,

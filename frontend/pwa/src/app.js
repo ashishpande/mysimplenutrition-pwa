@@ -213,7 +213,7 @@ function renderDaySummary(dayTotals, meals = []) {
                 .map((m) => {
                   const totals = computeTotalsFromItems(m.items || []);
                   return `
-                    <li class="meal-item">
+                    <li class="meal-item swipeable" data-meal-id="${m.id}">
                       <div class="meal-header">
                         <span class="pill">${m.mealType || "meal"}</span>
                         <span class="meal-time">${new Date(m.consumedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
@@ -828,6 +828,27 @@ async function submitManualBarcodeSkip() {
     showToast("Barcode added");
   } catch (_err) {
     showToast("Could not log barcode");
+  }
+}
+
+async function deleteMealById(mealId) {
+  if (!mealId) return;
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  try {
+    const res = await deleteMeal(mealId, state.auth.accessToken, tzOffsetMinutes);
+    if (!res.ok) throw new Error("delete_failed");
+    if (state.today?.meals?.length) {
+      state.today.meals = state.today.meals.filter((m) => m.id !== mealId);
+    }
+    if (state.result?.meal?.id === mealId) {
+      state.result = null;
+    }
+    invalidateAllSummaries();
+    fetchToday();
+    fetchDays();
+    showToast("Meal deleted");
+  } catch (_err) {
+    showToast("Could not delete meal");
   }
 }
 
@@ -1858,6 +1879,42 @@ function renderApp() {
         state.dayPanels.mealsOpen = todayMealsDetails.open;
       };
     }
+    document.querySelectorAll(".day-meals-list .meal-item.swipeable").forEach((item) => {
+      if (item.dataset.swipeBound === "true") return;
+      item.dataset.swipeBound = "true";
+      const mealId = item.dataset.mealId;
+      let startX = 0;
+      let currentX = 0;
+      let swiping = false;
+      item.addEventListener("touchstart", (event) => {
+        if (event.touches.length !== 1) return;
+        startX = event.touches[0].clientX;
+        currentX = startX;
+        swiping = true;
+        item.classList.add("swipe-active");
+      }, { passive: true });
+      item.addEventListener("touchmove", (event) => {
+        if (!swiping) return;
+        currentX = event.touches[0].clientX;
+        const dx = Math.min(0, currentX - startX);
+        item.style.transform = `translateX(${dx}px)`;
+      }, { passive: true });
+      item.addEventListener("touchend", async () => {
+        if (!swiping) return;
+        swiping = false;
+        const dx = currentX - startX;
+        item.style.transform = "";
+        item.classList.remove("swipe-active");
+        if (dx < -80) {
+          await deleteMealById(mealId);
+        }
+      });
+      item.addEventListener("touchcancel", () => {
+        swiping = false;
+        item.style.transform = "";
+        item.classList.remove("swipe-active");
+      });
+    });
     if (document.getElementById("fixText")) {
       document.getElementById("fixText").oninput = (e) => (state.fix.text = e.target.value);
     }

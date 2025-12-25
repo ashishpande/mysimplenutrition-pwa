@@ -89,7 +89,17 @@ export const state = {
   loadingDays: false,
   summary: {
     today: { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false },
-    week: { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false },
+    week: {
+      status: "idle",
+      text: "",
+      summaryKey: "",
+      generatedAt: null,
+      source: "local",
+      open: false,
+      detailsOpen: false,
+      showZeros: false,
+      compare: false,
+    },
   },
   trends: {
     status: "idle",

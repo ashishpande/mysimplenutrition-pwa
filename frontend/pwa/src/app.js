@@ -433,7 +433,7 @@ function computeWeekStats(days) {
 }
 
 function computeDailyAveragesFromWeek(stats) {
-  const days = Math.max(7, 1);
+  const days = Math.max(stats.loggedDays || 0, 1);
   return {
     calories: Math.round((stats.totalCalories || 0) / days),
     protein_g: Math.round((stats.proteinG || 0) / days),
@@ -1686,7 +1686,7 @@ function renderApp() {
               <summary><span class="summary-caret" aria-hidden="true">▸</span><span class="summary-title">Summary</span></summary>
               <div class="summary-block">
                 ${renderDailyAverageSummaryCard(weekBaseline)}
-                <details class="details-card">
+                <details id="week-nutrients-details" class="details-card" ${state.summary.week.detailsOpen ? "open" : ""}>
                   <summary>Show detailed nutrients</summary>
                   <div class="summary-controls">
                     <label class="checkbox small">
@@ -1698,6 +1698,11 @@ function renderApp() {
                       Compare to previous week
                     </label>
                   </div>
+                  ${
+                    weekBaseline.loggedDays
+                      ? `<p class="muted small">Daily average based on ${weekBaseline.loggedDays} logged day${weekBaseline.loggedDays === 1 ? "" : "s"}.</p>`
+                      : ""
+                  }
                   ${compareWeek && !hasPreviousWeek ? `<p class="muted">Loading previous week...</p>` : renderNutrientTable(weekTotals, { showZeros, compareTotals })}
                   <p>${getSummaryText("week", weekBaseline)}</p>
                 </details>
@@ -2342,6 +2347,12 @@ function renderApp() {
         render();
       };
     }
+    const weekNutrientsDetails = document.getElementById("week-nutrients-details");
+    if (weekNutrientsDetails) {
+      weekNutrientsDetails.ontoggle = () => {
+        state.summary.week.detailsOpen = weekNutrientsDetails.open;
+      };
+    }
     const compareToggle = document.getElementById("week-compare-toggle");
     if (compareToggle) {
       compareToggle.onchange = (e) => {
@@ -2461,7 +2472,17 @@ function renderApp() {
       };
       state.result = null;
       state.summary.today = { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false };
-      state.summary.week = { status: "idle", text: "", summaryKey: "", generatedAt: null, source: "local", open: false };
+      state.summary.week = {
+        status: "idle",
+        text: "",
+        summaryKey: "",
+        generatedAt: null,
+        source: "local",
+        open: false,
+        detailsOpen: false,
+        showZeros: false,
+        compare: false,
+      };
       state.dayPanels = { nutrientsOpen: false, mealsOpen: false };
       state.historyRangeDays = 7;
       state.profileForm = { firstName: "", lastName: "", heightCm: "", weightKg: "" };

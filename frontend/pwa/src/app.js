@@ -22,6 +22,25 @@ const trendPeriodOptions = [
   { value: "1y", label: "Last year" },
 ];
 const defaultTrendPeriod = "7d";
+const ENGAGEMENT_KEY = "engagement_v1";
+const DV_FIELDS = [
+  { key: "calories", label: "Calories", unit: "kcal", dv: 2000, group: "Macros" },
+  { key: "protein_g", label: "Protein", unit: "g", dv: 50, group: "Macros" },
+  { key: "carbs_g", label: "Carbs", unit: "g", dv: 275, group: "Macros" },
+  { key: "fat_g", label: "Fat", unit: "g", dv: 78, group: "Macros" },
+  { key: "fiber_g", label: "Fiber", unit: "g", dv: 28, group: "Macros" },
+  { key: "sugars_g", label: "Sugar", unit: "g", dv: 50, group: "Macros" },
+  { key: "saturated_fat_g", label: "Saturated fat", unit: "g", dv: 20, group: "Other nutrients" },
+  { key: "trans_fat_g", label: "Trans fat", unit: "g", dv: null, group: "Other nutrients" },
+  { key: "cholesterol_mg", label: "Cholesterol", unit: "mg", dv: 300, group: "Other nutrients" },
+  { key: "sodium_mg", label: "Sodium", unit: "mg", dv: 2300, group: "Other nutrients" },
+  { key: "vitamin_d_mcg", label: "Vitamin D", unit: "mcg", dv: 20, group: "Other nutrients" },
+  { key: "calcium_mg", label: "Calcium", unit: "mg", dv: 1300, group: "Other nutrients" },
+  { key: "iron_mg", label: "Iron", unit: "mg", dv: 18, group: "Other nutrients" },
+  { key: "potassium_mg", label: "Potassium", unit: "mg", dv: 4700, group: "Other nutrients" },
+];
+
+state.engagement = loadEngagement();
 
 function getTrendPreferences() {
   const metrics = state.auth.user?.trendPreferences?.metrics;
@@ -42,6 +61,48 @@ function hydrateTrendPreferences() {
 
 function getTrendOptionByKey(key) {
   return trendMetricOptions.find((opt) => opt.key === key);
+}
+
+function loadEngagement() {
+  const raw = safeStorageGet(ENGAGEMENT_KEY, "");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        mealsLogged: Number(parsed.mealsLogged || 0),
+        daysWithMeals: Number(parsed.daysWithMeals || 0),
+        aiOptIn: !!parsed.aiOptIn,
+      };
+    } catch (_err) {}
+  }
+  return { mealsLogged: 0, daysWithMeals: 0, aiOptIn: false };
+}
+
+function saveEngagement(next) {
+  state.engagement = { ...state.engagement, ...next };
+  safeStorageSet(ENGAGEMENT_KEY, JSON.stringify(state.engagement));
+}
+
+function updateMealsLogged(count = 1) {
+  const mealsLogged = Math.max(0, (state.engagement?.mealsLogged || 0) + count);
+  saveEngagement({ mealsLogged });
+}
+
+function updateDaysWithMealsFromDays(days = []) {
+  const counted = days.filter((day) => (day.calories || 0) > 0).length;
+  const daysWithMeals = Math.max(state.engagement?.daysWithMeals || 0, counted);
+  saveEngagement({ daysWithMeals });
+}
+
+function isAiUnlocked() {
+  const engagement = state.engagement || {};
+  return !!engagement.aiOptIn || (engagement.mealsLogged || 0) >= 5 || (engagement.daysWithMeals || 0) >= 3;
+}
+
+function requestAiSummary(range) {
+  saveEngagement({ aiOptIn: true });
+  trackEvent("ai_optin_clicked", { range });
+  loadSummary(range);
 }
 
 function maybeInitResetFromUrl() {
@@ -371,6 +432,16 @@ function computeWeekStats(days) {
   };
 }
 
+function computeDailyAveragesFromWeek(stats) {
+  const days = Math.max(7, 1);
+  return {
+    calories: Math.round((stats.totalCalories || 0) / days),
+    protein_g: Math.round((stats.proteinG || 0) / days),
+    carbs_g: Math.round((stats.carbsG || 0) / days),
+    fat_g: Math.round((stats.fatG || 0) / days),
+  };
+}
+
 function buildTodayLocalSummary(stats) {
   if (!stats.mealCount) {
     return "You haven't logged any meals today yet.";
@@ -387,6 +458,132 @@ function buildWeeklyLocalSummary(stats) {
   const mealLabel = mealCount === 1 ? "meal" : "meals";
   const dayLabel = daysLogged === 1 ? "day" : "days";
   return `Last 7 days: ${daysLogged} ${dayLabel} logged, ${mealCount || "?"} ${mealLabel} and ${stats.totalCalories.toLocaleString()} kcal, P ${stats.proteinG}g, C ${stats.carbsG}g, F ${stats.fatG}g (avg ${stats.avgCaloriesPerDay.toLocaleString()} kcal/day).`;
+}
+
+function splitWeeks(days = []) {
+  const sorted = [...days].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const current = sorted.slice(-7);
+  const previous = sorted.slice(-14, -7);
+  return { current, previous };
+}
+
+function sumDayTotals(days = []) {
+  return days.reduce(
+    (acc, day) => ({
+      calories: acc.calories + (day.calories || 0),
+      protein_g: acc.protein_g + (day.protein_g || 0),
+      carbs_g: acc.carbs_g + (day.carbs_g || 0),
+      fat_g: acc.fat_g + (day.fat_g || 0),
+      fiber_g: acc.fiber_g + (day.fiber_g || 0),
+      sugars_g: acc.sugars_g + (day.sugars_g || 0),
+      saturated_fat_g: acc.saturated_fat_g + (day.saturated_fat_g || 0),
+      trans_fat_g: acc.trans_fat_g + (day.trans_fat_g || 0),
+      cholesterol_mg: acc.cholesterol_mg + (day.cholesterol_mg || 0),
+      sodium_mg: acc.sodium_mg + (day.sodium_mg || 0),
+      vitamin_d_mcg: acc.vitamin_d_mcg + (day.vitamin_d_mcg || 0),
+      calcium_mg: acc.calcium_mg + (day.calcium_mg || 0),
+      iron_mg: acc.iron_mg + (day.iron_mg || 0),
+      potassium_mg: acc.potassium_mg + (day.potassium_mg || 0),
+    }),
+    {
+      calories: 0,
+      protein_g: 0,
+      carbs_g: 0,
+      fat_g: 0,
+      fiber_g: 0,
+      sugars_g: 0,
+      saturated_fat_g: 0,
+      trans_fat_g: 0,
+      cholesterol_mg: 0,
+      sodium_mg: 0,
+      vitamin_d_mcg: 0,
+      calcium_mg: 0,
+      iron_mg: 0,
+      potassium_mg: 0,
+    }
+  );
+}
+
+function renderDailyAverageSummaryCard(stats) {
+  if (!stats || !stats.totalCalories) {
+    return `<p class="muted">No meals logged yet.</p>`;
+  }
+  const avg = computeDailyAveragesFromWeek(stats);
+  return `
+    <div class="avg-summary-card">
+      <div class="avg-title">Daily average (estimate)</div>
+      <div class="avg-calories">
+        <strong>~${avg.calories}</strong>
+        <span class="unit">kcal / day</span>
+      </div>
+      <div class="avg-macros">
+        Protein ${avg.protein_g}g ·
+        Carbs ${avg.carbs_g}g ·
+        Fat ${avg.fat_g}g
+      </div>
+    </div>
+  `;
+}
+
+function formatNutrientAmount(value, unit) {
+  const digits = unit === "kcal" || unit === "mg" ? 0 : 1;
+  return `${formatNumber(value, digits)} ${unit}`;
+}
+
+function renderNutrientTable(total = {}, opts = {}) {
+  const showZeros = !!opts.showZeros;
+  const compareTotals = opts.compareTotals || null;
+  const groups = ["Macros", "Other nutrients"];
+  const rowsByGroup = groups.reduce((acc, group) => ({ ...acc, [group]: [] }), {});
+  DV_FIELDS.forEach((field) => {
+    const value = Number(total[field.key] || 0);
+    if (!showZeros && value <= 0) return;
+    const amountText = formatNutrientAmount(value, field.unit);
+    let dvCell = "—";
+    if (compareTotals) {
+      const prevValue = Number(compareTotals.previous?.[field.key] || 0);
+      const delta = value - prevValue;
+      if (delta !== 0) {
+        const arrow = delta > 0 ? "▲" : "▼";
+        dvCell = `${arrow} ${formatNutrientAmount(Math.abs(delta), field.unit)}`;
+      }
+    } else if (field.dv) {
+      const pct = Math.round((value / field.dv) * 100);
+      dvCell = `<span class="dv-pill">${Math.max(0, pct)}% DV</span>`;
+    }
+    rowsByGroup[field.group].push(`
+      <div class="nutrient-row">
+        <div>${field.label}</div>
+        <div>${amountText}</div>
+        <div>${dvCell}</div>
+      </div>
+    `);
+  });
+  const hasRows = groups.some((group) => rowsByGroup[group].length);
+  if (!hasRows) {
+    return `<p class="muted">No nutrients to show yet.</p>`;
+  }
+  const headerLabel = compareTotals ? "Δ" : "DV";
+  return `
+    <div class="nutrient-table">
+      <div class="nutrient-row nutrient-head">
+        <div>Nutrient</div>
+        <div>Amount</div>
+        <div>${headerLabel}</div>
+      </div>
+      ${groups
+        .map(
+          (group) =>
+            rowsByGroup[group].length
+              ? `
+                <div class="nutrient-table-title">${group}</div>
+                ${rowsByGroup[group].join("")}
+              `
+              : ""
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function buildSummaryTeaser(stats) {
@@ -1395,6 +1592,14 @@ function renderApp() {
   const themeIcon = state.theme === "dark" ? "🌙" : state.theme === "light" ? "☀️" : "🌓";
   const todayBaseline = computeTodayStats(state.today);
   const weekBaseline = computeWeekStats(days);
+  const weekBuckets = splitWeeks(days);
+  const weekTotals = sumDayTotals(weekBuckets.current);
+  const prevWeekTotals = sumDayTotals(weekBuckets.previous);
+  const showZeros = !!state.summary.week?.showZeros;
+  const compareWeek = !!state.summary.week?.compare;
+  const hasPreviousWeek = weekBuckets.previous.length >= 7;
+  const compareTotals = compareWeek && hasPreviousWeek ? { current: weekTotals, previous: prevWeekTotals } : null;
+  const aiUnlocked = isAiUnlocked();
   appEl.innerHTML = `
     <div class="shell">
       <header class="app-header">
@@ -1466,6 +1671,7 @@ function renderApp() {
             <summary><span class="summary-title">Summary</span></summary>
             <div class="summary-block">
               <p>${getSummaryText("today", todayBaseline)}</p>
+              ${aiUnlocked ? "" : `<button class="ghost small" id="ai-unlock-today" type="button">Generate AI summary</button>`}
             </div>
             <p class="muted" style="margin-top: 8px;">Based on logged meals. Estimates may be approximate.</p>
           </details>`
@@ -1479,7 +1685,23 @@ function renderApp() {
             <details id="week-summary" class="details-card summary-card" ${state.summary.week.open ? "open" : ""}>
               <summary><span class="summary-caret" aria-hidden="true">▸</span><span class="summary-title">Summary</span></summary>
               <div class="summary-block">
-                <p>${getSummaryText("week", weekBaseline)}</p>
+                ${renderDailyAverageSummaryCard(weekBaseline)}
+                <details class="details-card">
+                  <summary>Show detailed nutrients</summary>
+                  <div class="summary-controls">
+                    <label class="checkbox small">
+                      <input type="checkbox" id="week-show-zeros" ${showZeros ? "checked" : ""} />
+                      Show zeros
+                    </label>
+                    <label class="checkbox small">
+                      <input type="checkbox" id="week-compare-toggle" ${compareWeek ? "checked" : ""} />
+                      Compare to previous week
+                    </label>
+                  </div>
+                  ${compareWeek && !hasPreviousWeek ? `<p class="muted">Loading previous week...</p>` : renderNutrientTable(weekTotals, { showZeros, compareTotals })}
+                  <p>${getSummaryText("week", weekBaseline)}</p>
+                </details>
+                ${aiUnlocked ? "" : `<button class="ghost small" id="ai-unlock-week" type="button">Generate AI summary</button>`}
               </div>
               <p class="muted" style="margin-top: 8px;">Based on logged meals · Estimates may be approximate</p>
             </details>
@@ -1879,6 +2101,10 @@ function renderApp() {
         state.dayPanels.mealsOpen = todayMealsDetails.open;
       };
     }
+    const aiUnlockToday = document.getElementById("ai-unlock-today");
+    if (aiUnlockToday) {
+      aiUnlockToday.onclick = () => requestAiSummary("today");
+    }
     document.querySelectorAll(".day-meals-list .meal-item.swipeable").forEach((item) => {
       if (item.dataset.swipeBound === "true") return;
       item.dataset.swipeBound = "true";
@@ -2107,6 +2333,31 @@ function renderApp() {
       weekDetails.ontoggle = () => {
         state.summary.week.open = weekDetails.open;
       };
+    }
+    const showZerosToggle = document.getElementById("week-show-zeros");
+    if (showZerosToggle) {
+      showZerosToggle.onchange = (e) => {
+        state.summary.week.showZeros = e.target.checked;
+        trackEvent("history_week_toggle_zeros", { enabled: e.target.checked });
+        render();
+      };
+    }
+    const compareToggle = document.getElementById("week-compare-toggle");
+    if (compareToggle) {
+      compareToggle.onchange = (e) => {
+        const enabled = e.target.checked;
+        state.summary.week.compare = enabled;
+        trackEvent("history_week_compare_toggled", { enabled });
+        if (enabled && state.days.length < 14) {
+          state.historyRangeDays = Math.max(state.historyRangeDays, 14);
+          fetchDays();
+        }
+        render();
+      };
+    }
+    const aiUnlockWeek = document.getElementById("ai-unlock-week");
+    if (aiUnlockWeek) {
+      aiUnlockWeek.onclick = () => requestAiSummary("week");
     }
     document.querySelectorAll(".day-item").forEach((item) => {
       item.onclick = () => toggleDayExpansion(item.dataset.date);
@@ -2675,11 +2926,20 @@ async function loadSummary(range) {
 
 function ensureSummary(range) {
   const summaryState = state.summary[range];
-  if (summaryState.status === "idle") {
-    loadSummary(range);
-  } else {
+  const stats = range === "today" ? computeTodayStats(state.today) : computeWeekStats(state.days);
+  summaryState.status = "success";
+  summaryState.text = range === "today" ? buildTodayLocalSummary(stats) : buildWeeklyLocalSummary(stats);
+  summaryState.source = "local";
+  if (!isAiUnlocked()) {
+    if (!summaryState.lockedViewTracked) {
+      trackEvent("ai_summary_locked_viewed", { range });
+      summaryState.lockedViewTracked = true;
+    }
     render();
+    return;
   }
+  trackEvent("ai_summary_requested_auto", { range });
+  loadSummary(range);
 }
 
 async function submitText() {
@@ -2708,6 +2968,8 @@ async function submitText() {
     }
     state.result = data;
     state.text = "";
+    updateMealsLogged(1);
+    updateDaysWithMealsFromDays(state.days || []);
     invalidateAllSummaries();
     fetchToday();
     fetchDays();
@@ -2735,6 +2997,7 @@ async function fetchDays() {
     const data = await parseJsonSafe(res);
     if (!res.ok) throw new Error(data?.error || "Failed to load days");
     state.days = (data.days || []);
+    updateDaysWithMealsFromDays(state.days);
   } catch (err) {
     state.error = err.message;
   } finally {

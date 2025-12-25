@@ -322,6 +322,41 @@ End with:
 "This summary is based on logged meals and values are approximate."`;
 }
 
+function buildWeeklySummaryPrompt(totals, days = 7) {
+  const t = normalizeSummaryTotals(totals);
+  const perDay = {
+    calories: Math.round((t.calories || 0) / Math.max(days, 1)),
+    protein_g: Math.round((t.protein_g || 0) / Math.max(days, 1)),
+    carbs_g: Math.round((t.carbs_g || 0) / Math.max(days, 1)),
+    fat_g: Math.round((t.fat_g || 0) / Math.max(days, 1)),
+    fiber_g: Math.round((t.fiber_g || 0) / Math.max(days, 1)),
+    sugars_g: Math.round((t.sugars_g || 0) / Math.max(days, 1)),
+    sodium_mg: Math.round((t.sodium_mg || 0) / Math.max(days, 1)),
+    potassium_mg: Math.round((t.potassium_mg || 0) / Math.max(days, 1)),
+    calcium_mg: Math.round((t.calcium_mg || 0) / Math.max(days, 1)),
+    iron_mg: Math.round((t.iron_mg || 0) / Math.max(days, 1)),
+    vitamin_d_mcg: Math.round((t.vitamin_d_mcg || 0) / Math.max(days, 1)),
+  };
+  const filtered = Object.fromEntries(Object.entries(perDay).filter(([, value]) => value > 0));
+  return `You are writing a short, friendly nutrition summary for a simple food-logging app.
+
+Rules:
+- Max 3 short lines
+- Use daily averages (per day)
+- Sound conversational, not clinical
+- Mention estimates once
+- Do not list nutrients that are zero or missing
+- No emojis, no medical advice
+
+Input:
+${JSON.stringify({ days, perDay: filtered })}
+
+Example output:
+On average over the last week, you ate about 790 kcal per day.
+Your meals were protein-forward with moderate carbs and fats.
+This summary is based on logged meals and values are estimates.`;
+}
+
 function computeBarcodeConfidence(source) {
   if (source === "local") return 1.0;
   if (source === "openfoodfacts") return 1.0;
@@ -2494,7 +2529,7 @@ app.get("/api/summary", authMiddleware, async (req, res) => {
     let text = baseline;
     let model = null;
     if (useGroq && !SKIP_LLM) {
-      const prompt = buildSummaryPrompt("Last 7 days", summaryTotals, mealCount);
+      const prompt = buildWeeklySummaryPrompt(summaryTotals, 7);
       const aiText = await generateGroqSummary(prompt);
       if (aiText && summaryBodyIncludesFacts(aiText, summaryTotals)) {
         text = aiText.trim();

@@ -533,12 +533,15 @@ function formatNutrientAmount(value, unit) {
 function renderNutrientTable(total = {}, opts = {}) {
   const showZeros = !!opts.showZeros;
   const compareTotals = opts.compareTotals || null;
+  const avgDays = Math.max(opts.avgDays || 1, 1);
   const groups = ["Macros", "Other nutrients"];
   const rowsByGroup = groups.reduce((acc, group) => ({ ...acc, [group]: [] }), {});
   DV_FIELDS.forEach((field) => {
     const value = Number(total[field.key] || 0);
     if (!showZeros && value <= 0) return;
+    const avgValue = value / avgDays;
     const amountText = formatNutrientAmount(value, field.unit);
+    const avgText = formatNutrientAmount(avgValue, field.unit);
     let dvCell = "—";
     if (compareTotals) {
       const prevValue = Number(compareTotals.previous?.[field.key] || 0);
@@ -555,6 +558,7 @@ function renderNutrientTable(total = {}, opts = {}) {
       <div class="nutrient-row">
         <div>${field.label}</div>
         <div>${amountText}</div>
+        <div>${avgText}</div>
         <div>${dvCell}</div>
       </div>
     `);
@@ -569,6 +573,7 @@ function renderNutrientTable(total = {}, opts = {}) {
       <div class="nutrient-row nutrient-head">
         <div>Nutrient</div>
         <div>Amount</div>
+        <div>Avg/day</div>
         <div>${headerLabel}</div>
       </div>
       ${groups
@@ -1703,7 +1708,11 @@ function renderApp() {
                       ? `<p class="muted small">Daily average based on ${weekBaseline.loggedDays} logged day${weekBaseline.loggedDays === 1 ? "" : "s"}.</p>`
                       : ""
                   }
-                  ${compareWeek && !hasPreviousWeek ? `<p class="muted">Loading previous week...</p>` : renderNutrientTable(weekTotals, { showZeros, compareTotals })}
+                  ${
+                    compareWeek && !hasPreviousWeek
+                      ? `<p class="muted">Loading previous week...</p>`
+                      : renderNutrientTable(weekTotals, { showZeros, compareTotals, avgDays: weekBaseline.loggedDays })
+                  }
                   <p>${getSummaryText("week", weekBaseline)}</p>
                 </details>
                 ${aiUnlocked ? "" : `<button class="ghost small" id="ai-unlock-week" type="button">Generate AI summary</button>`}

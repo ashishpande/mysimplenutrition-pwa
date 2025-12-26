@@ -551,7 +551,7 @@ function renderNutrientTable(total = {}, opts = {}) {
         dvCell = `${arrow} ${formatNutrientAmount(Math.abs(delta), field.unit)}`;
       }
     } else if (field.dv) {
-      const pct = Math.round((value / field.dv) * 100);
+      const pct = Math.round((avgValue / field.dv) * 100);
       dvCell = `<span class="dv-pill">${Math.max(0, pct)}% DV</span>`;
     }
     rowsByGroup[field.group].push(`
@@ -1605,6 +1605,10 @@ function renderApp() {
   const hasPreviousWeek = weekBuckets.previous.length >= 7;
   const compareTotals = compareWeek && hasPreviousWeek ? { current: weekTotals, previous: prevWeekTotals } : null;
   const aiUnlocked = isAiUnlocked();
+  if (compareWeek && state.days.length < 14 && !state.loadingDays) {
+    state.historyRangeDays = Math.max(state.historyRangeDays, 14);
+    fetchDays();
+  }
   appEl.innerHTML = `
     <div class="shell">
       <header class="app-header">
@@ -2072,9 +2076,23 @@ function renderApp() {
     document.getElementById("submit-btn").onclick = submitText;
     const todaySummaryEl = document.getElementById("today-summary");
     if (todaySummaryEl) {
+      const summaryEl = todaySummaryEl.querySelector("summary");
+      if (summaryEl) {
+        summaryEl.onclick = (e) => {
+          e.preventDefault();
+          const nextOpen = !todaySummaryEl.open;
+          state.summary.today.open = nextOpen;
+          if (nextOpen) {
+            todaySummaryEl.setAttribute("open", "");
+            ensureSummary("today");
+          } else {
+            todaySummaryEl.removeAttribute("open");
+            render();
+          }
+        };
+      }
       todaySummaryEl.ontoggle = () => {
         state.summary.today.open = todaySummaryEl.open;
-        if (todaySummaryEl.open) ensureSummary("today");
       };
     }
     const todayNutrients = document.getElementById("today-nutrients-details");
@@ -3026,7 +3044,7 @@ async function fetchDays() {
     });
     const data = await parseJsonSafe(res);
     if (!res.ok) throw new Error(data?.error || "Failed to load days");
-    state.days = (data.days || []);
+    state.days = fillMissingDays((data.days || []), startStr, endStr);
     updateDaysWithMealsFromDays(state.days);
   } catch (err) {
     state.error = err.message;
@@ -3438,6 +3456,48 @@ async function parseJsonSafe(res) {
 
 function formatLocalYMD(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getDayKey(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.includes("T") ? value.split("T")[0] : value;
+  return formatLocalYMD(new Date(value));
+}
+
+function buildDailyTotalsSkeleton(dateStr) {
+  return {
+    date: dateStr,
+    calories: 0,
+    protein_g: 0,
+    carbs_g: 0,
+    fat_g: 0,
+    fiber_g: 0,
+    sugars_g: 0,
+    saturated_fat_g: 0,
+    trans_fat_g: 0,
+    cholesterol_mg: 0,
+    sodium_mg: 0,
+    vitamin_d_mcg: 0,
+    calcium_mg: 0,
+    iron_mg: 0,
+    potassium_mg: 0,
+    mealCount: 0,
+  };
+}
+
+function fillMissingDays(days, startStr, endStr) {
+  if (!startStr || !endStr) return days || [];
+  const byDate = new Map((days || []).map((d) => [getDayKey(d.date), d]));
+  const filled = [];
+  const cursor = new Date(`${startStr}T00:00:00`);
+  const end = new Date(`${endStr}T00:00:00`);
+  while (cursor <= end) {
+    const key = formatLocalYMD(cursor);
+    const existing = byDate.get(key);
+    filled.push(existing ? { ...existing, date: key } : buildDailyTotalsSkeleton(key));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return filled;
 }
 
 function computeTotalsFromItems(items) {

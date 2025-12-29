@@ -1413,6 +1413,9 @@ details[open] > summary .summary-caret {
   display: grid;
   gap: 12px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-card h3 {

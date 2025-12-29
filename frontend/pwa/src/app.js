@@ -392,6 +392,9 @@ function computeTodayStats(today) {
 
 function computeWeekStats(days) {
   const totalDays = 7;
+  const windowDays = [...(days || [])]
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .slice(-totalDays);
   if (!days?.length) {
     return {
       headline: "Last 7 calendar days: no data yet.",
@@ -406,7 +409,7 @@ function computeWeekStats(days) {
       mealCount: 0,
     };
   }
-  const totals = days.reduce(
+  const totals = windowDays.reduce(
     (acc, day) => ({
       calories: acc.calories + (day.calories || 0),
       protein_g: acc.protein_g + (day.protein_g || 0),
@@ -416,11 +419,12 @@ function computeWeekStats(days) {
     }),
     { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, meals: 0 }
   );
-  const loggedDays = days.filter((day) => (day.calories || 0) > 0).length;
-  const avgCalories = totals.calories / Math.max(totalDays, 1);
+  const loggedDays = windowDays.filter((day) => (day.calories || 0) > 0).length;
+  const avgDays = Math.max(loggedDays, 1);
+  const avgCalories = loggedDays ? totals.calories / avgDays : 0;
   return {
     headline: `Last 7 calendar days: ${loggedDays} day${loggedDays === 1 ? "" : "s"} logged`,
-    avg: `Avg ${Math.round(avgCalories)} kcal/day`,
+    avg: loggedDays ? `Avg ${Math.round(avgCalories)} kcal/day` : "",
     macros: `Macros: P ${Math.round(totals.protein_g)}g · C ${Math.round(totals.carbs_g)}g · F ${Math.round(totals.fat_g)}g`,
     loggedDays,
     totalCalories: Math.round(totals.calories || 0),
@@ -1065,12 +1069,19 @@ function openBarcodeOverlay({ autoStartCamera } = {}) {
 }
 
 async function submitManualBarcode() {
-  const input = document.getElementById("manual-barcode");
+  const input = getVisibleManualBarcodeInput();
   const code = input?.value?.trim() || "";
   if (!code || code.length < 8) return;
   trackEvent("barcode_scanner_method_used", { method: "manual" });
   await handleBarcodeDetected(code);
   if (input) input.value = "";
+}
+
+function getVisibleManualBarcodeInput() {
+  const active = document.activeElement;
+  if (active && active.id === "manual-barcode") return active;
+  const inputs = Array.from(document.querySelectorAll("#manual-barcode"));
+  return inputs.find((el) => el.offsetParent !== null) || inputs[0] || null;
 }
 
 async function handleBarcodeDetected(value) {
@@ -1601,13 +1612,12 @@ function renderApp() {
   const weekTotals = sumDayTotals(weekBuckets.current);
   const prevWeekTotals = sumDayTotals(weekBuckets.previous);
   const showZeros = !!state.summary.week?.showZeros;
-  const compareWeek = !!state.summary.week?.compare;
+  const compareWeek = false;
   const hasPreviousWeek = weekBuckets.previous.length >= 7;
-  const compareTotals = compareWeek && hasPreviousWeek ? { current: weekTotals, previous: prevWeekTotals } : null;
+  const compareTotals = null;
   const aiUnlocked = isAiUnlocked();
-  if (compareWeek && state.days.length < 14 && !state.loadingDays) {
-    state.historyRangeDays = Math.max(state.historyRangeDays, 14);
-    fetchDays();
+  if (state.days.length < 14 && !state.loadingDays) {
+    // Compare disabled; keep history range as-is.
   }
   appEl.innerHTML = `
     <div class="shell">
@@ -1702,10 +1712,7 @@ function renderApp() {
                       <input type="checkbox" id="week-show-zeros" ${showZeros ? "checked" : ""} />
                       Show zeros
                     </label>
-                    <label class="checkbox small">
-                      <input type="checkbox" id="week-compare-toggle" ${compareWeek ? "checked" : ""} />
-                      Compare to previous week
-                    </label>
+                    
                   </div>
                   ${
                     weekBaseline.loggedDays
@@ -2380,19 +2387,6 @@ function renderApp() {
         state.summary.week.detailsOpen = weekNutrientsDetails.open;
       };
     }
-    const compareToggle = document.getElementById("week-compare-toggle");
-    if (compareToggle) {
-      compareToggle.onchange = (e) => {
-        const enabled = e.target.checked;
-        state.summary.week.compare = enabled;
-        trackEvent("history_week_compare_toggled", { enabled });
-        if (enabled && state.days.length < 14) {
-          state.historyRangeDays = Math.max(state.historyRangeDays, 14);
-          fetchDays();
-        }
-        render();
-      };
-    }
     const aiUnlockWeek = document.getElementById("ai-unlock-week");
     if (aiUnlockWeek) {
       aiUnlockWeek.onclick = () => requestAiSummary("week");
@@ -2545,19 +2539,19 @@ function renderApp() {
       if (manualWrap) manualWrap.classList.toggle("is-hidden");
     };
   }
-  const manualSubmit = document.getElementById("manual-barcode-submit");
-  if (manualSubmit) {
-    manualSubmit.onclick = () => submitManualBarcode();
-  }
-  const manualInput = document.getElementById("manual-barcode");
-  if (manualInput) {
-    manualInput.onkeydown = (e) => {
+  const manualSubmits = document.querySelectorAll("#manual-barcode-submit");
+  manualSubmits.forEach((btn) => {
+    btn.onclick = () => submitManualBarcode();
+  });
+  const manualInputs = document.querySelectorAll("#manual-barcode");
+  manualInputs.forEach((input) => {
+    input.onkeydown = (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
         submitManualBarcode();
       }
     };
-  }
+  });
   const entryName = document.getElementById("barcode-name");
   if (entryName) entryName.oninput = (e) => updateBarcodeEntryField("name", e.target.value);
   const entryServing = document.getElementById("barcode-serving");

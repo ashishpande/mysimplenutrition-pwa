@@ -2338,15 +2338,44 @@ app.get("/api/days", authMiddleware, (req, res) => {
   const offsetMs = tzOffsetMinutes * 60000;
   const startDate = new Date(new Date(`${start}T00:00:00Z`).getTime() + offsetMs);
   const endDate = new Date(new Date(`${end}T00:00:00Z`).getTime() + offsetMs);
-  prisma.dailyTotal
+  const { startUtc } = computeLocalDayWindow(start, tzOffsetMinutes);
+  const { endUtc } = computeLocalDayWindow(end, tzOffsetMinutes);
+  prisma.meal
     .findMany({
-      where: {
-        userId,
-        date: { gte: startDate, lte: endDate },
-      },
-      orderBy: { date: "asc" },
+      where: { userId, consumedAt: { gte: startUtc, lt: endUtc } },
+      include: { items: true },
     })
-    .then((days) => res.json({ days }))
+    .then((meals) => {
+      const totalsByDate = new Map();
+      meals.forEach((meal) => {
+        const key = formatLocalYMD(meal.consumedAt, tzOffsetMinutes);
+        const next = meal.items.reduce(
+          (acc, item) =>
+            accumulateNutrients(acc, {
+              calories: item.calories,
+              protein_g: item.protein_g,
+              carbs_g: item.carbs_g,
+              fat_g: item.fat_g,
+              fiber_g: item.fiber_g,
+              sugars_g: item.sugars_g,
+              saturated_fat_g: item.saturated_fat_g,
+              trans_fat_g: item.trans_fat_g,
+              cholesterol_mg: item.cholesterol_mg,
+              sodium_mg: item.sodium_mg,
+              vitamin_d_mcg: item.vitamin_d_mcg,
+              calcium_mg: item.calcium_mg,
+              iron_mg: item.iron_mg,
+              potassium_mg: item.potassium_mg,
+            }),
+          totalsByDate.get(key) || { ...emptyNutrients }
+        );
+        totalsByDate.set(key, next);
+      });
+      const response = [...totalsByDate.entries()]
+        .sort(([a], [b]) => new Date(a).getTime() - new Date(b).getTime())
+        .map(([date, totals]) => ({ date, ...normalizeNutrients(totals) }));
+      res.json({ days: response });
+    })
     .catch((err) => {
       // eslint-disable-next-line no-console
       console.error(err);
@@ -2582,7 +2611,6 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
 
     const periodDays = getTrendPeriodDays(period);
     const endDate = new Date();
-    endDate.setDate(endDate.getDate() - 1);
     const startDate = new Date(endDate);
     startDate.setDate(startDate.getDate() - (periodDays * 2 - 1));
     const startStr = formatLocalYMD(startDate, tzOffsetMinutes);
@@ -2634,17 +2662,15 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
 
     const prevKeys = dayKeys.slice(0, periodDays);
     const lastKeys = dayKeys.slice(periodDays);
-    const todayKey = formatLocalYMD(new Date(), tzOffsetMinutes);
-    const lastKeysFiltered = lastKeys.filter((key) => key !== todayKey);
     const countLoggedDays = (keys) =>
-      keys.filter((key) => key !== todayKey).filter((key) => {
+      keys.filter((key) => {
         const bucket = buckets.get(key);
         return bucket?.meals || (bucket?.totals?.calories || 0) > 0;
       }).length;
-    const lastLoggedDays = countLoggedDays(lastKeysFiltered);
+    const lastLoggedDays = countLoggedDays(lastKeys);
     const prevLoggedDays = countLoggedDays(prevKeys);
-    const totalDays = lastKeysFiltered.length;
-    const dataHashPayload = lastKeysFiltered.map((key) => {
+    const totalDays = lastKeys.length;
+    const dataHashPayload = lastKeys.map((key) => {
       const bucket = buckets.get(key);
       const totals = bucket?.totals || {};
       return {
@@ -2673,11 +2699,11 @@ app.get("/api/trends", authMiddleware, async (req, res) => {
         };
       }
       const sumForKeys = (keys) =>
-        keys.filter((key) => key !== todayKey).reduce((sum, key) => {
+        keys.reduce((sum, key) => {
           const bucket = buckets.get(key);
           return sum + (bucket?.totals?.[config.nutrientKey] || 0);
         }, 0);
-      const lastSum = sumForKeys(lastKeysFiltered);
+      const lastSum = sumForKeys(lastKeys);
       const prevSum = sumForKeys(prevKeys);
       const last7Avg = lastLoggedDays ? lastSum / lastLoggedDays : 0;
       const prev7Avg = prevLoggedDays ? prevSum / prevLoggedDays : 0;

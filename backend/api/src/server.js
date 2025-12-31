@@ -1681,9 +1681,37 @@ async function findFoodFromBarcodeCacheByName(displayName) {
   const lookup = String(displayName || "").trim();
   if (!lookup) return null;
   try {
-    const cached = await prisma.barcodeCache.findFirst({
+    let cached = await prisma.barcodeCache.findFirst({
       where: { name: { equals: lookup, mode: "insensitive" } },
     });
+    if (!cached) {
+      const tokens = lookup
+        .toLowerCase()
+        .split(/\s+/)
+        .map((token) => token.replace(/[^\w]/g, ""))
+        .filter((token) => token.length > 2);
+      if (tokens.length) {
+        const candidates = await prisma.barcodeCache.findMany({
+          where: { AND: tokens.map((token) => ({ name: { contains: token, mode: "insensitive" } })) },
+          take: 10,
+        });
+        if (candidates.length) {
+          candidates.sort((a, b) => String(b.name || "").length - String(a.name || "").length);
+          cached = candidates[0];
+        }
+      }
+      if (!cached && tokens.length >= 2) {
+        const tailTokens = tokens.slice(-2);
+        const candidates = await prisma.barcodeCache.findMany({
+          where: { AND: tailTokens.map((token) => ({ name: { contains: token, mode: "insensitive" } })) },
+          take: 10,
+        });
+        if (candidates.length) {
+          candidates.sort((a, b) => String(b.name || "").length - String(a.name || "").length);
+          cached = candidates[0];
+        }
+      }
+    }
     if (!cached) return null;
     const servingSize = cached.servingSize || "100 g";
     const baseGrams = parseServingSizeGrams(servingSize) || 100;
@@ -1883,6 +1911,14 @@ function fallbackExtractFoods(text) {
     .filter(Boolean);
 }
 
+function normalizeMealLookupText(text) {
+  return String(text || "")
+    .replace(/^\s*(i\s+)?(ate|had|drank)\s+/i, "")
+    .replace(/\bfor\s+(breakfast|lunch|dinner|snack)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function computeLocalDayWindow(dateStr, tzOffsetMinutes) {
   const [y, m, d] = dateStr.split("-").map(Number);
   const offsetMs = tzOffsetMinutes * 60000;
@@ -2042,8 +2078,25 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
   const mealConsumedAt = consumedAt ? new Date(consumedAt) : parsed.consumedAt || new Date();
   const targetDateStr = clientDateStr || formatLocalYMD(mealConsumedAt, tzOffsetMinutes);
 
-  const extracted = await extractFoodsFromLlm(parsed.foodText);
-  const parsedTokens = extracted.length ? extracted : fallbackExtractFoods(parsed.foodText);
+  const lookupText = normalizeMealLookupText(parsed.foodText);
+  let directBase = null;
+  if (lookupText) {
+    directBase = await resolveFoodBase({ food: lookupText, brand: "", displayName: lookupText });
+  }
+  const extracted = directBase ? [] : await extractFoodsFromLlm(parsed.foodText);
+  const parsedTokens = directBase
+    ? [
+        {
+          food: directBase.name || lookupText,
+          brand: "",
+          quantity: 1,
+          unit: directBase.serving?.unit || "serving",
+          base: directBase,
+        },
+      ]
+    : extracted.length
+      ? extracted
+      : fallbackExtractFoods(parsed.foodText);
   if (!parsedTokens.length) {
     return res.status(400).json({ error: "Could not identify any foods in that description." });
   }
@@ -2052,11 +2105,12 @@ app.post("/api/meals", authMiddleware, async (req, res) => {
   for (const token of parsedTokens) {
     const displayName = [token.brand, token.food].filter(Boolean).join(" ").trim() || token.food;
     const lookupKey = buildLookupKey(token);
-    let base = FORCE_LLM ? null : foods.get(lookupKey);
-    if (!base && !FORCE_LLM) {
+    let base = token.base || foods.get(lookupKey);
+    if (!base) {
       base = await resolveFoodBase({ food: token.food, brand: token.brand, displayName });
     }
-    const needsRefresh = !base || (base.source && String(base.source).includes("fallback"));
+    const trustedSource = base?.source && ["food_table", "barcode_cache", "history", "barcode"].includes(base.source);
+    const needsRefresh = !base || (base.source && String(base.source).includes("fallback")) || (FORCE_LLM && !trustedSource);
     if (needsRefresh) {
       let estimate = null;
       try {

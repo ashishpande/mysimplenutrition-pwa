@@ -1,3 +1,78 @@
+
+Goal: Get an AI coding agent productive quickly by describing the repo shape, developer workflows, and project-specific conventions you must follow.
+
+- **Big picture**: Voice-first nutrition tracker. Frontend PWA (`frontend/pwa`) talks to a Node API (`backend/api`). A preprocessing pipeline (`backend/preprocess`) normalizes many JSON slices from `data/` and writes a searchable DB (`backend/db/nutrition.db`). A small local-LLM helper (`backend/llm`) estimates nutrition when a match isn't found.
+
+- **Service boundaries**:
+  - `frontend/pwa`: UI, voice input, service worker, local caching; expects API at `window.API_BASE` (dev default `http://localhost:4000/api`).
+  - `backend/api`: thin route handlers in `routes/`; business logic in `services/`; DB access in `db/`; schema/validation in `schemas/`.
+  - `backend/preprocess`: idempotent ingestion + normalization from `data/*` → writes `backend/db/nutrition.db` (SQLite FTS5 or DuckDB).
+  - `backend/llm`: prompt templates (`prompt/`), runners (`runner/`), validators (`validators/`), and a `cache/` to memoize estimates.
+
+- **Key files to inspect first**:
+  - `README.md` (repo root) — quickstart + Docker notes.
+  - `backend/api/README.md` — route/service/db layout and dev commands.
+  - `backend/preprocess/README.md` — ingestion flow and output DB.
+  - `backend/llm/README.md` — LLM output JSON contract and validators.
+  - `frontend/pwa/README.md` — PWA expectations and client API location (`lib/api`).
+
+- **Concrete workflows / exact commands** (copy-paste these):
+```
+cd backend/api && npm install
+# From repo root (dev stubbed flow)
+npm run dev
+# Docker local stack (API + Ollama)
+docker compose up -d
+# Serve PWA locally
+cd frontend/pwa && npx serve .
+# Run prisma migrations inside API container
+docker exec -it $(docker ps -qf name=api) npx prisma migrate deploy && npx prisma generate
+```
+
+- **Env & integrations**:
+  - `DATABASE_URL`: SQLite (default) or Postgres.
+  - `JWT_SECRET`: session signing.
+  - `OLLAMA_HOST`, `OLLAMA_MODEL`: when using local Ollama LLM.
+  - API default port: `4000`; frontend expects `/api` via `window.API_BASE`.
+
+- **DB & data conventions**:
+  - Primary store is SQLite with FTS5. Tables: `foods`, `aliases`, `servings`, `nutrients`, `meals`, `meal_items`, `daily_totals`.
+  - Matching uses FTS on `foods.name` + aliases; a trigram re-ranker is applied in `services/matcher.ts` (or equivalent).
+  - Preprocess reads `data/*` JSON slices (e.g. `common_foods_*`, `grocery_brands_*`, `restaurant_foods_*`) and writes normalized rows into `backend/db/nutrition.db`.
+
+- **LLM output contract (from `backend/llm/README.md`)** — validator expects this shape:
+```json
+{
+  "name":"string","serving_g":number,"calories":number,
+  "protein_g":number,"carbs_g":number,"fat_g":number,
+  "fiber_g":number,"sugar_g":number,"sodium_mg":number,
+  "confidence":number,"model_estimated":true
+}
+```
+  - Validators enforce non-negative macros, plausible per-100g bounds, and basic calories↔macros consistency.
+
+- **Code patterns & conventions to follow**:
+  - Keep route handlers thin; put logic in `backend/api/services/*` for testability.
+  - Use `backend/api/db/*` (DAL) for DB access; avoid ad-hoc SQL in handlers.
+  - Preprocess scripts are idempotent; prefer incremental caches in `backend/preprocess/cache/` when available.
+  - LLM adapters must be deterministic and cached — add validators + cache entries rather than relying on raw model randomness.
+
+- **Testing & debugging**:
+  - Unit tests: `backend/api/test/` — use `npx vitest` (check `backend/api/package.json`).
+  - E2E (local): `docker compose up -d` → ensure Ollama model available → run migrations → serve PWA with `npx serve .` and test voice flow.
+
+- **Where to change behavior for common tasks**:
+  - Matching/re-ranking: `backend/api/services/matcher.ts`.
+  - Ingestion rules/normalization: `backend/preprocess/normalize.*`.
+  - New LLM prompts: `backend/llm/prompt/` and `backend/llm/runner/`.
+
+- **Quick heuristics for agents**:
+  - Prefer editing `services/` or `preprocess/` over touching route handlers directly.
+  - If you change data shape (DB/LLM/API), update README snippets and add migrations/validators.
+  - Keep LLM interactions deterministic: add validators + cache results.
+
+If anything is unclear or you want a short example patch updating `services/matcher.ts` or a sample preprocess run, tell me which piece to expand.
+
 # Copilot instructions for the Nutrition app
 
 Goal: Help an AI coding agent be productive quickly by describing the repo architecture, developer workflows, important files, and project-specific conventions.

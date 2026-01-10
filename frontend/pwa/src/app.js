@@ -1,5 +1,5 @@
 import { API_BASE, AUTH_BASE, PIE_COLORS, state, maybeDefaultRegisterUnits, safeStorageGet, safeStorageSet } from "./state.js";
-import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary, fetchTrends, fetchConfig, consumeBarcode, saveBarcodeManual, skipBarcodeManual, postMetric } from "./api.js";
+import { authRequest, requestResetLink, resetPasswordApi, createMeal, fetchDaysApi, fetchDailyApi, fetchTodayApi, deleteMeal, patchMealMeta, fetchSummary, fetchTrends, fetchConfig, lookupBarcode, consumeBarcode, saveBarcodeManual, skipBarcodeManual, postMetric, runOcrFromImage } from "./api.js";
 import { formatWhen, buildConsumedAtFromInputs } from "./time.js";
 
 const appEl = document.getElementById("app");
@@ -133,6 +133,416 @@ function showToast(message, type = "success") {
     state.toast = null;
     render();
   }, 3000);
+}
+
+function normalizeOcrText(text) {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^\w\s.%]/g, " ")
+    .replace(/%(\d)/g, "% $1")
+    .replace(/([a-z%])(\d)/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(text) {
+  return normalizeOcrText(text).split(" ");
+}
+
+const NUTRIENTS = {
+  calories: {
+    keys: ["calorie", "calories", "energie", "energy"],
+    unit: null,
+  },
+  fat_g: {
+    keys: ["fat", "lipides", "gras"],
+    unit: "g",
+  },
+  carbs_g: {
+    keys: ["carb", "carbs", "carbohydrate", "glucides"],
+    unit: "g",
+  },
+  protein_g: {
+    keys: ["protein", "proteine", "proteines"],
+    unit: "g",
+  },
+  fiber_g: {
+    keys: ["fiber", "fibre", "fibres"],
+    unit: "g",
+  },
+  sugars_g: {
+    keys: ["sugar", "sugars", "sucre", "sucres"],
+    unit: "g",
+  },
+  added_sugar_g: {
+    keys: ["added"],
+    unit: "g",
+  },
+  sodium_mg: {
+    keys: ["sodium", "sel"],
+    unit: "mg",
+  },
+};
+
+const NUTRIENT_KEYS = Object.values(NUTRIENTS)
+  .flatMap((def) => def.keys)
+  .filter((key) => key !== "added");
+
+function isNutrientToken(token) {
+  return NUTRIENT_KEYS.some((key) => token.includes(key));
+}
+
+function normalizeUnitToken(token) {
+  return token
+    .replace("zg", "g")
+    .replace("gx", "g")
+    .replace("mq", "mg")
+    .replace("mcg.", "mcg")
+    .replace("mg,", "mg")
+    .replace("g,", "g");
+}
+
+function parseValue(token) {
+  const fixed = normalizeUnitToken(token);
+  const match = fixed.match(/^(\d+(\.\d+)?)(g|mg|mcg)?$/);
+  if (!match) return null;
+  return {
+    value: match[1],
+    unit: match[3] || null,
+  };
+}
+
+function extractNutrientsFromOcr(text) {
+  const tokens = tokenize(text);
+  const values = {};
+  const confidence = {};
+  for (const key of Object.keys(NUTRIENTS)) {
+    values[key] = "";
+    confidence[key] = 0;
+  }
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    for (const [nutrient, def] of Object.entries(NUTRIENTS)) {
+      if (!def.keys.some((k) => token.includes(k))) continue;
+      if (values[nutrient] && confidence[nutrient] >= 0.8) continue;
+      let target = nutrient;
+      if (nutrient === "sugars_g") {
+        const prev = tokens[i - 1] || "";
+        const prevPrev = tokens[i - 2] || "";
+        if (["added", "incl", "includes"].includes(prev) || ["added", "incl", "includes"].includes(prevPrev)) {
+          target = "added_sugar_g";
+        }
+      }
+      const targetDef = NUTRIENTS[target];
+      for (let j = i + 1; j <= i + 8 && j < tokens.length; j += 1) {
+        if (j > i + 1 && isNutrientToken(tokens[j])) break;
+        const parsed = parseValue(tokens[j]);
+        if (!parsed) continue;
+        if (targetDef.unit && parsed.unit && parsed.unit !== targetDef.unit) continue;
+        if (targetDef.unit === "g") {
+          const gramsVal = Number(parsed.value);
+          if (Number.isFinite(gramsVal) && gramsVal > 100) continue;
+        }
+        values[target] = parsed.value;
+        confidence[target] += 0.8;
+        break;
+      }
+    }
+  }
+  if (values.calories) {
+    const calVal = Number(values.calories);
+    if (Number.isFinite(calVal) && calVal < 30) {
+      for (let i = 0; i < tokens.length; i += 1) {
+        const parsed = parseValue(tokens[i]);
+        if (!parsed || parsed.unit) continue;
+        const v = Number(parsed.value);
+        if (Number.isFinite(v) && v >= 80 && v <= 1200) {
+          values.calories = parsed.value;
+          confidence.calories += 0.4;
+          break;
+        }
+      }
+    }
+  }
+  return { values, confidence };
+}
+
+function normalizeUnits(values) {
+  const out = { ...values };
+  const sodiumVal = Number(out.sodium_mg);
+  if (out.sodium_mg && Number.isFinite(sodiumVal) && sodiumVal < 10) {
+    out.sodium_mg = String(Math.round(sodiumVal * 1000));
+  }
+  return out;
+}
+
+function scoreConfidence(text, confidence) {
+  const t = text.toLowerCase();
+  if (t.includes("nutrition")) {
+    for (const k in confidence) confidence[k] += 0.2;
+  }
+  if (t.includes("serving")) {
+    for (const k in confidence) confidence[k] += 0.1;
+  }
+  return confidence;
+}
+
+function normalizeConfidence(confidence) {
+  for (const k in confidence) {
+    confidence[k] = Math.min(1, Math.round(confidence[k] * 100) / 100);
+  }
+  return confidence;
+}
+
+function addOcrCapture(values, confidence) {
+  if (!state.ocr.captures) state.ocr.captures = [];
+  state.ocr.captures.push({ values, confidence });
+}
+
+function mergeCaptures(captures) {
+  const totals = {};
+  const weights = {};
+  for (const cap of captures) {
+    for (const k in cap.values) {
+      if (!cap.values[k]) continue;
+      const val = Number(cap.values[k]);
+      if (!Number.isFinite(val)) continue;
+      const w = cap.confidence[k] || 0.3;
+      totals[k] = (totals[k] || 0) + val * w;
+      weights[k] = (weights[k] || 0) + w;
+    }
+  }
+  const merged = {};
+  for (const k in totals) {
+    merged[k] = String(Math.round(totals[k] / weights[k]));
+  }
+  return merged;
+}
+
+function handleOcrResult(text) {
+  const parsed = extractNutrientsFromOcr(text);
+  const normalized = normalizeUnits(parsed.values);
+  const scored = scoreConfidence(text, parsed.confidence);
+  const confidence = normalizeConfidence(scored);
+  addOcrCapture(normalized, confidence);
+  const merged = mergeCaptures(state.ocr.captures);
+  if (Object.values(merged).every((v) => !v)) {
+    showToast("Label scanned but values unclear. Try again.", "error");
+    render();
+    return false;
+  }
+  Object.assign(state.barcodeEntry, merged);
+  state.barcodeEntry.ocrConfidence = confidence;
+  showToast("Nutrition label scanned. Review values.");
+  render();
+  return true;
+}
+
+function closeOcr() {
+  if (state.ocr.imageUrl) {
+    URL.revokeObjectURL(state.ocr.imageUrl);
+  }
+  if (state.ocr.captureUrl) {
+    URL.revokeObjectURL(state.ocr.captureUrl);
+  }
+  state.ocr = {
+    active: false,
+    status: "idle",
+    text: "",
+    imageUrl: "",
+    fromBarcodeFallback: false,
+    stream: null,
+    captures: [],
+    zoomed: false,
+    cropMode: "flat",
+    captureUrl: "",
+  };
+  render();
+}
+
+function getLabelCropBox(video, mode = "flat") {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (mode === "curved") {
+    return {
+      x: vw * 0.5,
+      y: vh * 0.06,
+      w: vw * 0.48,
+      h: vh * 0.62,
+    };
+  }
+  return {
+    x: vw * 0.58,
+    y: vh * 0.08,
+    w: vw * 0.4,
+    h: vh * 0.5,
+  };
+}
+
+async function openLabelScanner() {
+  const overlay = document.getElementById("label-scan-overlay");
+  const video = document.getElementById("label-video");
+  if (!overlay || !video) return;
+  overlay.classList.remove("hidden");
+  overlay.classList.add("active");
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    });
+    video.srcObject = stream;
+    const fitVideo = () => {
+      const container = video.closest(".nutrition-scan");
+      if (!container || !video.videoWidth || !video.videoHeight) return;
+      const cw = container.clientWidth || 1;
+      const videoRatio = video.videoWidth / video.videoHeight;
+      container.style.height = `${Math.round(cw / videoRatio)}px`;
+      video.style.width = "100%";
+      video.style.height = "100%";
+      const crop = getLabelCropBox(video, state.ocr.cropMode);
+      container.style.setProperty("--crop-left", `${(crop.x / video.videoWidth) * 100}%`);
+      container.style.setProperty("--crop-top", `${(crop.y / video.videoHeight) * 100}%`);
+      container.style.setProperty("--crop-width", `${(crop.w / video.videoWidth) * 100}%`);
+      container.style.setProperty("--crop-height", `${(crop.h / video.videoHeight) * 100}%`);
+      const debug = document.getElementById("label-debug");
+      if (debug) {
+        debug.textContent = `Video ${video.videoWidth}x${video.videoHeight} · Box ${Math.round(cw)}x${Math.round(container.clientHeight || 0)}`;
+      }
+    };
+    video.onloadedmetadata = () => {
+      video.setAttribute("width", String(video.videoWidth));
+      video.setAttribute("height", String(video.videoHeight));
+      fitVideo();
+    };
+    window.addEventListener("resize", fitVideo);
+    video.dataset.fitHandler = "true";
+    video._fitLabelVideo = fitVideo;
+    state.ocr.stream = stream;
+  } catch (_err) {
+    showToast("Camera access was blocked.", "error");
+    closeLabelScanner();
+  }
+}
+
+function closeLabelScanner() {
+  const overlay = document.getElementById("label-scan-overlay");
+  if (overlay) {
+    overlay.classList.add("hidden");
+    overlay.classList.remove("active");
+  }
+  if (state.ocr.stream) {
+    state.ocr.stream.getTracks().forEach((track) => track.stop());
+    state.ocr.stream = null;
+  }
+  const video = document.getElementById("label-video");
+  if (video) {
+    video.srcObject = null;
+    video.removeAttribute("width");
+    video.removeAttribute("height");
+    video.style.width = "";
+    video.style.height = "";
+    video.classList.remove("zoomed");
+    const container = video.closest(".nutrition-scan");
+    if (container) container.style.height = "";
+    if (video._fitLabelVideo) {
+      window.removeEventListener("resize", video._fitLabelVideo);
+      delete video._fitLabelVideo;
+    }
+  }
+}
+
+function captureNutritionPanel(video, canvas) {
+  const { x: cropX, y: cropY, w: cropW, h: cropH } = getLabelCropBox(video, state.ocr.cropMode);
+  canvas.width = cropW;
+  canvas.height = cropH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+  return canvas;
+}
+
+function preprocessForOcr(canvas) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = img.data;
+  const contrast = 1.35;
+  const intercept = 128 * (1 - contrast);
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const v = Math.min(255, Math.max(0, gray * contrast + intercept));
+    data[i] = v;
+    data[i + 1] = v;
+    data[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+async function runOcrOnBlob(blob) {
+  state.ocr.status = "scanning";
+  render();
+  try {
+    const text = await runOcrFromImage(blob);
+    state.ocr.text = text || "";
+    if (state.barcodeEntry?.open) {
+      state.barcodeEntry.ocrText = state.ocr.text;
+    }
+    if (state.barcodeEntry?.open) {
+      console.log("OCR RAW:", state.ocr.text);
+      const ok = handleOcrResult(state.ocr.text);
+      if (!ok) {
+        state.ocr.status = "error";
+        closeLabelScanner();
+        return;
+      }
+      state.ocr.status = "success";
+      showToast("Label scanned. Review values before saving.");
+    } else {
+      state.ocr.status = "success";
+      handleOcrResult(state.ocr.text);
+    }
+  } catch (_err) {
+    state.ocr.status = "error";
+    showToast("Could not read label. Try again.");
+  }
+  closeLabelScanner();
+  render();
+}
+
+function useOcrText() {
+  if (!state.ocr.text) return;
+  state.text = state.ocr.text.trim();
+  closeOcr();
+  submitText();
+}
+
+function renderOcrModal() {
+  if (!state.ocr.active) return "";
+  const fallbackCopy = state.ocr.fromBarcodeFallback
+    ? `<p class="scanner-help">We couldn’t find this barcode. We scanned the nutrition label instead — please review.</p>`
+    : "";
+  return `
+    <div class="overlay">
+      <div class="modal-card">
+        <h3>Scanned Nutrition Label</h3>
+        ${fallbackCopy}
+        <textarea id="ocr-text" rows="8">${state.ocr.text || ""}</textarea>
+        <span class="badge estimated">OCR estimated</span>
+        <p class="scanner-privacy">Image processed on-device. Nothing stored.</p>
+        <div class="modal-actions">
+          <button class="ghost" id="ocr-cancel" type="button">Cancel</button>
+          <button class="primary" id="ocr-use" type="button">Use</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function dismissTutorial() {
@@ -913,6 +1323,7 @@ function openBarcodeEntryModal(barcode) {
     barcode,
     name: "",
     fullLabel: false,
+    offerOcr: false,
     servingSize: "100 g",
     calories: "",
     protein_g: "",
@@ -936,6 +1347,12 @@ function openBarcodeEntryModal(barcode) {
 
 function updateBarcodeEntryField(field, value) {
   state.barcodeEntry = { ...state.barcodeEntry, [field]: value };
+}
+
+function syncBarcodeSaveState() {
+  const saveBtn = document.getElementById("barcode-save");
+  if (!saveBtn) return;
+  saveBtn.disabled = !state.barcodeEntry.calories;
 }
 
 function collectBarcodeNutrients(entry) {
@@ -1007,6 +1424,7 @@ async function submitManualBarcodeSave() {
         included_micros: includedMicros,
       });
     }
+    closeOcr();
     showToast("Barcode added");
   } catch (_err) {
     showToast("Could not save barcode");
@@ -1031,6 +1449,7 @@ async function submitManualBarcodeSkip() {
     fetchToday();
     fetchDays();
     trackEvent("barcode_manual_entry_skipped", { barcode: entry.barcode });
+    closeOcr();
     showToast("Barcode added");
   } catch (_err) {
     showToast("Could not log barcode");
@@ -1089,17 +1508,23 @@ async function handleBarcodeDetected(value) {
   render();
   try {
     const lookupStarted = Date.now();
+    const lookupRes = await lookupBarcode(value, state.auth.accessToken);
+    const lookupData = await parseJsonSafe(lookupRes);
+    if (!lookupRes.ok) {
+      if (lookupData?.error === "barcode_not_found") {
+        trackEvent("barcode_scan_completed", { barcode: value, result: "not_found", source: "none" });
+        openBarcodeEntryModal(value);
+        state.barcodeEntry = { ...state.barcodeEntry, fullLabel: true, offerOcr: false };
+        showToast("Barcode not found. Enter nutrition manually.");
+        render();
+        return;
+      }
+      throw new Error(lookupData?.error || "Barcode lookup failed");
+    }
     const tzOffsetMinutes = new Date().getTimezoneOffset();
     const res = await consumeBarcode(value, state.auth.accessToken, "snack", tzOffsetMinutes);
     const data = await parseJsonSafe(res);
-    if (!res.ok) {
-      if (data?.error === "barcode_not_found") {
-        trackEvent("barcode_scan_completed", { barcode: value, result: "not_found", source: "none" });
-        openBarcodeEntryModal(value);
-        return;
-      }
-      throw new Error(data?.error || "Barcode lookup failed");
-    }
+    if (!res.ok) throw new Error(data?.error || "Barcode lookup failed");
     state.result = data;
     state.text = "";
     invalidateAllSummaries();
@@ -1598,6 +2023,8 @@ function renderAuth() {
 
 function renderApp() {
   const { listening, status, text, result, error, tab, days } = state;
+  const params = new URLSearchParams(window.location.search);
+  const showOcrDebug = params.get("debugOcr") === "1" || safeStorageGet("debug_ocr", "") === "true";
   if (!state.trendPreferences.metrics.length) {
     hydrateTrendPreferences();
   }
@@ -1659,10 +2086,23 @@ function renderApp() {
             ? `
           <section class="card">
             <h2>Log a meal</h2>
+            <p class="log-helper">Type a meal, use voice, or scan a barcode.</p>
             <div class="log-input">
-              <button id="voice-btn" class="icon-btn ghost-btn ${listening ? "active" : ""}" aria-pressed="${listening}" aria-label="Use microphone">🎤</button>
-              ${state.features.barcode_scanning_enabled ? `<button id="barcode-btn" class="icon-btn ghost-btn" aria-label="Scan barcode">📷</button>` : ""}
-              <input id="text-input" class="log-field" placeholder="Type or say what you ate. We’ll estimate nutrition. (e.g., “2 eggs and toast”)" value="${text}" />
+              <button id="voice-btn" class="icon-btn scan-btn voice ${listening ? "active" : ""}" aria-pressed="${listening}" aria-label="Use microphone" title="Speak what you ate">
+                🎤
+                <span>Voice</span>
+              </button>
+              ${
+                state.features.barcode_scanning_enabled
+                  ? `
+                    <button id="barcode-btn" class="icon-btn scan-btn barcode" aria-label="Scan barcode" title="Scan barcode">
+                      📦
+                      <span>Barcode</span>
+                    </button>
+                  `
+                  : ""
+              }
+              <input id="text-input" class="log-field" placeholder="Type what you ate (e.g., 2 eggs and toast)" value="${text}" />
               <button id="submit-btn" class="primary log-btn" ${status === "loading" ? "disabled" : ""}>
                 ${status === "loading" ? `<span class="spinner" aria-hidden="true"></span> Logging...` : "Log"}
               </button>
@@ -1966,6 +2406,20 @@ function renderApp() {
             <div class="modal-card">
               <h3>Add product once</h3>
               <p class="muted small">Provide nutrition for this barcode. Calories are required.</p>
+              ${
+                state.barcodeEntry.offerOcr
+                  ? `<p class="scanner-help">We couldn’t find this barcode. Scan the nutrition label to fill values automatically.</p>`
+                  : ""
+              }
+              ${
+                state.barcodeEntry.offerOcr
+                  ? `
+                    <div class="modal-actions">
+                      <button class="primary" id="scan-label-btn" type="button">🏷️ Scan Nutrition Label</button>
+                    </div>
+                  `
+                  : ""
+              }
               <label class="field">
                 <span>Product name</span>
                 <input id="barcode-name" placeholder="Optional" value="${state.barcodeEntry.name || ""}" />
@@ -1976,7 +2430,7 @@ function renderApp() {
               </label>
               <label class="field">
                 <span>Calories (required)</span>
-                <input id="barcode-calories" type="number" inputmode="decimal" value="${state.barcodeEntry.calories}" />
+                <input id="barcode-calories" type="text" inputmode="decimal" value="${state.barcodeEntry.calories}" />
               </label>
               <label class="checkbox barcode-checkbox">
                 <input id="barcode-full-label" type="checkbox" ${state.barcodeEntry.fullLabel ? "checked" : ""} />
@@ -2063,6 +2517,85 @@ function renderApp() {
         `
           : ""
       }
+      <div class="overlay hidden" id="label-scan-overlay">
+        <div class="barcode-frame">
+          <h3 class="scanner-title">Scan Nutrition Label</h3>
+          <div class="barcode-video nutrition-scan">
+            <div class="label-video-wrap">
+              <video id="label-video" autoplay playsinline></video>
+            </div>
+            <canvas id="label-canvas" hidden></canvas>
+          </div>
+          <p class="scanner-help" id="label-debug"></p>
+          <div class="barcode-actions">
+            <button class="ghost" id="cancel-label-scan" type="button">Cancel</button>
+            <button class="primary" id="capture-label" type="button">Capture</button>
+            <button class="ghost" id="apply-label-values" type="button">Use values</button>
+            <button class="ghost" id="label-zoom-toggle" type="button">Zoom x1.3</button>
+            <button class="ghost" id="label-crop-toggle" type="button">Crop: Flat</button>
+          </div>
+          <div class="barcode-manual">
+            <label class="field">
+              <span>Food name</span>
+              <input id="label-name" placeholder="Enter food name" value="${state.barcodeEntry.name || ""}" />
+            </label>
+            ${
+              state.barcodeEntry.name
+                ? ""
+                : `<p class="scanner-help">Add a name if it is not shown on the label.</p>`
+            }
+            <label class="field">
+              <span>Calories (kcal)</span>
+              <input id="label-calories" type="text" inputmode="decimal" value="${state.barcodeEntry.calories}" />
+            </label>
+            ${
+              state.ocr.captureUrl
+                ? `
+            <div class="ocr-preview">
+              <div class="ocr-preview-label">Captured crop</div>
+              <img src="${state.ocr.captureUrl}" alt="Cropped nutrition label" />
+            </div>
+            `
+                : ""
+            }
+            ${
+              showOcrDebug
+                ? `
+            <details class="ocr-debug">
+              <summary>OCR raw text</summary>
+              <textarea rows="6" readonly>${state.barcodeEntry.ocrText || state.ocr.text || ""}</textarea>
+            </details>
+            `
+                : ""
+            }
+            <label class="field">
+              <span>Protein (g)</span>
+              <input id="label-protein" type="number" inputmode="decimal" value="${state.barcodeEntry.protein_g}" />
+            </label>
+            <label class="field">
+              <span>Carbs (g)</span>
+              <input id="label-carbs" type="number" inputmode="decimal" value="${state.barcodeEntry.carbs_g}" />
+            </label>
+            <label class="field">
+              <span>Fat (g)</span>
+              <input id="label-fat" type="number" inputmode="decimal" value="${state.barcodeEntry.fat_g}" />
+            </label>
+            <label class="field">
+              <span>Fiber (g)</span>
+              <input id="label-fiber" type="number" inputmode="decimal" value="${state.barcodeEntry.fiber_g}" />
+            </label>
+            <label class="field">
+              <span>Sugars (g)</span>
+              <input id="label-sugars" type="number" inputmode="decimal" value="${state.barcodeEntry.sugars_g}" />
+            </label>
+            <label class="field">
+              <span>Sodium (mg)</span>
+              <input id="label-sodium" type="number" inputmode="decimal" value="${state.barcodeEntry.sodium_mg}" />
+            </label>
+          </div>
+          <p class="scanner-privacy">Align the nutrition facts panel inside the frame.</p>
+        </div>
+      </div>
       <nav class="mobile-nav">
         <button class="${tab === "today" ? "tab active" : "tab"}" data-tab="today">Today</button>
         <button class="${tab === "history" ? "tab active" : "tab"}" data-tab="history">History</button>
@@ -2079,6 +2612,13 @@ function renderApp() {
       if (barcodeBtn) {
         barcodeBtn.onclick = () => openBarcodeOverlay({ autoStartCamera: !isDesktop });
       }
+    }
+    const typeBtn = document.getElementById("type-btn");
+    if (typeBtn) {
+      typeBtn.onclick = () => {
+        const input = document.getElementById("text-input");
+        if (input) input.focus();
+      };
     }
     document.getElementById("submit-btn").onclick = submitText;
     const todaySummaryEl = document.getElementById("today-summary");
@@ -2511,6 +3051,7 @@ function renderApp() {
       state.trends = { status: "idle", metrics: [], summaryText: "", range: null, confidence: null, showTrends: true, dataHash: "" };
       state.features = { barcode_scanning_enabled: false };
       state.barcodeScanner = { active: false, error: null };
+      state.ocr = { active: false, status: "idle", text: "", imageUrl: "", fromBarcodeFallback: false, stream: null, captures: [] };
       render();
     };
   });
@@ -2560,7 +3101,7 @@ function renderApp() {
   if (entryCalories) {
     entryCalories.oninput = (e) => {
       updateBarcodeEntryField("calories", e.target.value);
-      render();
+      syncBarcodeSaveState();
     };
   }
   const entryFullLabel = document.getElementById("barcode-full-label");
@@ -2602,10 +3143,104 @@ function renderApp() {
   if (entryIron) entryIron.oninput = (e) => updateBarcodeEntryField("iron_mg", e.target.value);
   const entryPotassium = document.getElementById("barcode-potassium");
   if (entryPotassium) entryPotassium.oninput = (e) => updateBarcodeEntryField("potassium_mg", e.target.value);
+  const labelName = document.getElementById("label-name");
+  if (labelName) labelName.oninput = (e) => updateBarcodeEntryField("name", e.target.value);
+  const labelCalories = document.getElementById("label-calories");
+  if (labelCalories) {
+    labelCalories.oninput = (e) => {
+      updateBarcodeEntryField("calories", e.target.value);
+      syncBarcodeSaveState();
+    };
+  }
+  const labelProtein = document.getElementById("label-protein");
+  if (labelProtein) labelProtein.oninput = (e) => updateBarcodeEntryField("protein_g", e.target.value);
+  const labelCarbs = document.getElementById("label-carbs");
+  if (labelCarbs) labelCarbs.oninput = (e) => updateBarcodeEntryField("carbs_g", e.target.value);
+  const labelFat = document.getElementById("label-fat");
+  if (labelFat) labelFat.oninput = (e) => updateBarcodeEntryField("fat_g", e.target.value);
+  const labelFiber = document.getElementById("label-fiber");
+  if (labelFiber) labelFiber.oninput = (e) => updateBarcodeEntryField("fiber_g", e.target.value);
+  const labelSugars = document.getElementById("label-sugars");
+  if (labelSugars) labelSugars.oninput = (e) => updateBarcodeEntryField("sugars_g", e.target.value);
+  const labelSodium = document.getElementById("label-sodium");
+  if (labelSodium) labelSodium.oninput = (e) => updateBarcodeEntryField("sodium_mg", e.target.value);
   const entrySave = document.getElementById("barcode-save");
   if (entrySave) entrySave.onclick = () => submitManualBarcodeSave();
   const entrySkip = document.getElementById("barcode-skip");
   if (entrySkip) entrySkip.onclick = () => submitManualBarcodeSkip();
+  const scanLabelBtn = document.getElementById("scan-label-btn");
+  if (scanLabelBtn) {
+    scanLabelBtn.onclick = () => {
+      openLabelScanner();
+    };
+  }
+  const labelCancelBtn = document.getElementById("cancel-label-scan");
+  if (labelCancelBtn) {
+    labelCancelBtn.onclick = () => {
+      closeLabelScanner();
+      trackEvent("barcode_fallback_ocr", { success: false, reason: "user_cancel" });
+    };
+  }
+  const labelCaptureBtn = document.getElementById("capture-label");
+  if (labelCaptureBtn) {
+    labelCaptureBtn.onclick = async () => {
+      const video = document.getElementById("label-video");
+      const canvas = document.getElementById("label-canvas");
+      if (!video || !canvas) return;
+      if (video.videoWidth === 0) {
+        await new Promise((resolve) => {
+          video.onloadedmetadata = resolve;
+        });
+      }
+      const cropped = captureNutritionPanel(video, canvas);
+      if (!cropped) return;
+      preprocessForOcr(cropped);
+      if (state.ocr.stream) {
+        state.ocr.stream.getTracks().forEach((track) => track.stop());
+        state.ocr.stream = null;
+      }
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) {
+        showToast("Capture failed. Try again.");
+        return;
+      }
+      if (state.ocr.captureUrl) {
+        URL.revokeObjectURL(state.ocr.captureUrl);
+      }
+      state.ocr.captureUrl = URL.createObjectURL(blob);
+      trackEvent("barcode_fallback_ocr", { success: true, source: "camera_capture" });
+      runOcrOnBlob(blob);
+    };
+  }
+  const labelZoomToggle = document.getElementById("label-zoom-toggle");
+  if (labelZoomToggle) {
+    labelZoomToggle.onclick = () => {
+      state.ocr.zoomed = !state.ocr.zoomed;
+      const video = document.getElementById("label-video");
+      if (video) {
+        video.classList.toggle("zoomed", state.ocr.zoomed);
+      }
+      labelZoomToggle.textContent = state.ocr.zoomed ? "Zoom x1" : "Zoom x1.3";
+    };
+  }
+  const labelCropToggle = document.getElementById("label-crop-toggle");
+  if (labelCropToggle) {
+    labelCropToggle.onclick = () => {
+      state.ocr.cropMode = state.ocr.cropMode === "flat" ? "curved" : "flat";
+      labelCropToggle.textContent = state.ocr.cropMode === "flat" ? "Crop: Flat" : "Crop: Curved";
+      const video = document.getElementById("label-video");
+      if (video && video._fitLabelVideo) {
+        video._fitLabelVideo();
+      }
+    };
+  }
+  const applyLabelValues = document.getElementById("apply-label-values");
+  if (applyLabelValues) {
+    applyLabelValues.onclick = () => {
+      closeLabelScanner();
+      showToast("Values ready to review.");
+    };
+  }
   if (document.getElementById("dismiss-tutorial")) {
     document.getElementById("dismiss-tutorial").onclick = dismissTutorial;
   }

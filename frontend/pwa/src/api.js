@@ -157,3 +157,11 @@ export function postMetric(event, payload, token) {
     body: JSON.stringify({ event, payload }),
   });
 }
+
+export async function runOcrFromImage(file) {
+  if (!window.Tesseract) {
+    throw new Error("ocr_unavailable");
+  }
+  const { data } = await window.Tesseract.recognize(file, "eng");
+  return data.text || "";
+}

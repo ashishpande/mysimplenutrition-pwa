@@ -235,14 +235,25 @@ main {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
+.log-helper {
+  margin: 0 0 12px;
+  color: #475569;
+  font-size: clamp(14px, 2vw, 16px);
+}
+
 .log-field {
   border: none;
   background: transparent;
   padding: 12px 8px;
-  font-size: 15px;
+  font-size: clamp(16px, 2.2vw, 18px);
   width: 100%;
   color: #0f172a;
   min-width: 0;
+}
+
+.log-field::placeholder {
+  font-size: inherit;
+  color: #94a3b8;
 }
 
 .log-field:focus {
@@ -267,6 +278,36 @@ main {
   background: #dc2626;
   color: #fff;
   box-shadow: 0 10px 22px rgba(220, 38, 38, 0.22);
+}
+
+.scan-btn {
+  flex-direction: column;
+  gap: 4px;
+  width: 72px;
+  height: 72px;
+  font-size: 12px;
+}
+
+.scan-btn span {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.scan-btn.barcode {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.scan-btn.ocr {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.scan-btn.voice,
+.scan-btn.type {
+  background: #f8fafc;
+  color: #0f172a;
 }
 
 .ghost-btn {
@@ -649,6 +690,9 @@ button.ghost .spinner {
   background: #e2e8f0;
   color: #0f172a;
   border-color: #cbd5e1;
+}
+:root.theme-dark .modal-card .muted.small {
+  color: #000;
 }
 :root.theme-dark .tab-row button:not(.active) {
   color: #e5e7eb;
@@ -1328,6 +1372,45 @@ details[open] > summary .summary-caret {
   display: none;
 }
 
+.overlay.active .barcode-manual,
+.overlay.active .scanner-help,
+.overlay.active .scanner-title {
+  display: none;
+}
+
+.overlay.active .barcode-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  padding: 0;
+  background: #0f172a;
+  position: relative;
+}
+
+.overlay.active .barcode-video.nutrition-scan {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+.overlay.active .label-video-wrap,
+.overlay.active .label-video-wrap video {
+  border-radius: 0;
+}
+
+.overlay.active .barcode-actions {
+  display: flex;
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  gap: 12px;
+}
+
+.overlay.active #apply-label-values {
+  display: none;
+}
+
 .barcode-frame {
   width: min(480px, 100%);
   background: #fff;
@@ -1369,6 +1452,50 @@ details[open] > summary .summary-caret {
   font-size: 0.95rem;
 }
 
+.ocr-debug {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.ocr-preview {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  display: grid;
+  gap: 8px;
+}
+
+.ocr-preview-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.ocr-preview img {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  display: block;
+}
+
+.ocr-debug summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ocr-debug textarea {
+  width: 100%;
+  margin-top: 8px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  background: #fff;
+  resize: vertical;
+}
+
 .barcode-manual button {
   justify-self: flex-start;
 }
@@ -1392,6 +1519,19 @@ details[open] > summary .summary-caret {
   pointer-events: none;
 }
 
+.nutrition-scan::after {
+  content: "";
+  position: absolute;
+  left: var(--crop-left, 10%);
+  top: var(--crop-top, 15%);
+  width: var(--crop-width, 80%);
+  height: var(--crop-height, 70%);
+  border: 3px solid rgba(255, 255, 255, 0.95);
+  border-radius: 12px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
 .barcode-video video,
 .barcode-video canvas {
   position: absolute;
@@ -1399,6 +1539,50 @@ details[open] > summary .summary-caret {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.nutrition-scan {
+  aspect-ratio: auto;
+  height: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.label-video-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.label-video-wrap video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 12px;
+}
+
+.label-video-wrap video.zoomed {
+  transform: scale(1.3);
+  transform-origin: center;
+}
+
+.nutrition-scan canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 12px;
 }
 
 .barcode-manual.is-hidden {
